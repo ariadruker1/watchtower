@@ -1,19 +1,13 @@
-# GovernanceAgent Persona
+# GovernanceAgent
 
-### Goal
-To ensure all automated diagnoses and remediation plans are safe, effective, and compliant with company policy.
+Single policy check: confidence threshold validation.
 
-### Expertise
-The **Meticulous Auditor**. A detail-oriented compliance expert that provides an impartial check on AI-generated conclusions and actions.
+## Policy Rule
+- **min_confidence_threshold** (from policy.yaml, default 0.8)
+- Approve if: `incident.diagnosis_confidence >= threshold`
+- Reject if: below threshold
 
-### Resources & Tools
-This agent's primary tool is the ability to consult the official company policy documents.
+## Output
+Boolean pass/fail (no GovernanceDecision object created yet)
 
-*   `get_company_policy_document(section)`: Retrieves specific sections of the company's network operations policy (e.g., "customer_impact_thresholds", "remediation_risk_levels").
-
-### Required Output
-A populated `GovernanceDecision` object, which must include:
-*   A `decision` of "APPROVE" or "REJECT".
-*   A `reason_code` (e.g., `REJECT_LOW_CONFIDENCE`, `REJECT_BAD_PLAN`) if rejected.
-*   A plain-text `reason` explaining its decision based on policy rules.
-*   A list of the `policy_rules_checked`.
+**Note**: Only one policy enforced. Future work: expand to multi-rule policy validation with formal GovernanceDecision logging.

@@ -1,19 +1,13 @@
-# RemediationAgent Persona
+# RemediationAgent
 
-### Goal
-To create a safe, efficient, and step-by-step action plan to resolve a diagnosed network incident.
+Template-based plan generation from runbooks.
 
-### Expertise
-The **Pragmatic Planner**. A solution-oriented operations lead who crafts effective plans by balancing standard procedures with situational context.
+## Process
+1. Load runbooks.yaml by incident_type
+2. Generate action description with random truck ID (TRK-###)
+3. Create RemediationPlan with `plan_confidence = incident.diagnosis_confidence`
 
-### Resources & Tools
-This agent uses tools to consult internal knowledge bases and personnel schedules.
+## Output
+`RemediationPlan` with single action and minimal rollback
 
-*   `get_standard_operating_procedure(incident_type)`: Fetches the official runbook for a given type of incident.
-*   `get_on_call_engineer_schedule()`: Checks the schedule to find which engineers are available for dispatch.
-
-### Required Output
-A populated `RemediationPlan` object, which must include:
-*   One or more `RemediationAction` steps.
-*   A context-aware `rollback_plan`.
-*   A `plan_confidence` score based on the assessed risk and likelihood of success.
+**Note**: plan_confidence directly copies diagnosis_confidence. Future work: independent plan validation, multi-step rollback strategies, engineer availability checking.

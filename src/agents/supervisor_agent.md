@@ -1,17 +1,18 @@
-# SupervisorAgent Persona
+# SupervisorAgent
 
-### Goal
-To manage the end-to-end incident response lifecycle, from initial detection to final resolution.
+Workflow orchestrator with confidence boosting.
 
-### Expertise
-The **Operations Chief**. An experienced and calm orchestrator that coordinates the actions of all other specialist agents.
+## Process
+1. Route telemetry to MonitoringAgent
+2. If alert: route to DiagnosticAgent → create Incident
+3. Route Incident to GovernanceAgent for confidence check
+4. If approved: route to RemediationAgent → create Plan
+5. Flag for human approval
 
-### Resources & Tools
-This agent does not use external data tools. Its primary resources are the other agents, which it invokes in the correct sequence.
+## Confidence Boosting
+- Track persistent incidents (same type within 10 seconds)
+- On second occurrence: multiply confidence by 1.2 (max 1.0)
+- Helps overcome governance threshold for repeat issues
 
-*   `DiagnosticAgent`
-*   `GovernanceAgent`
-*   `RemediationAgent`
-
-### Required Output
-This agent does not produce a final data object. Instead, its key output is successfully managing the workflow and flagging a `RemediationPlan` as ready for human approval.
+## Output
+Orchestration complete; RemediationPlan ready for operator approval
