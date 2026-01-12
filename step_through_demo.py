@@ -284,11 +284,10 @@ def run_simulation():
                             paused = not paused
 
                 # Update header with pause status and token usage
-                pause_status = "[bold red] [PAUSED][/]" if paused else ""
+                pause_status = "[PAUSED]" if paused else ""
                 token_usage = supervisor.llm_client.get_token_usage_summary()
-                tokens_display = f"[cyan]Tokens: {token_usage['total_tokens']}/{supervisor.max_budget}[/]"
                 header_text = Text(
-                    f"Watchtower MVP - AI Self-Healing Demo {tokens_display}{pause_status}",
+                    f"Watchtower MVP - AI Self-Healing Demo {pause_status}",
                     justify="center",
                     style="bold white"
                 )
@@ -324,8 +323,11 @@ def run_simulation():
                         active_agent = "Monitoring"
                         current_incident = supervisor.current_incident
 
-                    # Process telemetry through agents
-                    log_message = supervisor.process_telemetry(telemetry)
+                    # Process telemetry through agents ONLY if no incident is being processed
+                    # This prevents clearing the incident logs while displaying step-through
+                    log_message = ""
+                    if not incident_active or (incident_active and not supervisor.current_incident):
+                        log_message = supervisor.process_telemetry(telemetry)
 
                     # Update agent tracking
                     if supervisor.current_incident:
