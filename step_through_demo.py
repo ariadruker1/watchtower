@@ -342,14 +342,14 @@ def run_simulation():
                                 agent_history.append("Remediation")
                                 active_agent = "Remediation"
                                 loading_llm = False
+                            if "Governance" not in agent_history:
+                                agent_history.append("Governance")
+                                active_agent = "Governance"
+                                loading_llm = True
                             if supervisor.human_approval_required:
                                 agent_history.append("Approval")
                                 active_agent = "Approval"
                                 loading_llm = False
-                            elif "Governance" not in agent_history:
-                                agent_history.append("Governance")
-                                active_agent = "Governance"
-                                loading_llm = True
 
                     # Reset incident when complete
                     if supervisor.human_approval_required:
@@ -370,12 +370,8 @@ def run_simulation():
                 pipeline_panel = create_pipeline_visualization(active_agent, agent_history)
 
                 # Always update help panel with current controls
-                help_lines = [
-                    "[bold cyan]SPACE[/] advance step  |  [bold cyan]↑↓[/] scroll logs  |  [bold cyan]l[/] open full log history",
-                    "[bold cyan]ESC[/] close log history  |  [bold cyan]y[/] approve  |  [bold cyan]n[/] reject  |  [bold cyan]p[/] pause",
-                ]
-                help_text = "\n".join(help_lines)
-                layout["help"].update(Panel(help_text, title="[bold yellow]Commands[/bold yellow]", style="dim white"))
+                help_text = "[bold cyan]SPACE[/] step  |  [bold cyan]↑↓[/] scroll  |  [bold cyan]l[/] log  |  [bold cyan]esc[/] close  |  [bold green]y[/] approve  |  [bold red]n[/] reject  |  [bold yellow]p[/] pause"
+                layout["help"].update(Panel(help_text, title="[bold cyan]COMMANDS[/bold cyan]", style="cyan"))
 
                 layout["left_panel"].update(status_panel)
                 layout["right_panel"].update(log_panel)
@@ -402,66 +398,60 @@ def run_simulation():
                     approval_panel_text = Text.from_markup(
                         "[bold]Options:[/]\n"
                         "  [bold green](y)[/] Approve plan\n"
-                        "  [bold red](n)[/] Reject - silence alert\n"
-                        "  [bold yellow](s)[/] Suggest alternative\n\n"
-                        "[bold]Your decision: [/]"
+                        "  [bold red](n)[/] Reject - silence alert\n\n"
+                        "[bold]Your decision (y/n): [/]"
                     )
                     approval_full = Text("\n").join([approval_text, approval_panel_text])
                     layout["approval"].update(Panel(approval_full, title="[bold red]Human Approval Required[/bold red]"))
+                    layout["approval"].visible = True
 
-                    # Handle approval input
+                    # Handle approval input - check for keys in step-through mode
                     if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-                        key = sys.stdin.read(1)
-                        response = key.lower()
+                        key = read_key_with_escape()
 
-                        if response == 'y':
-                            # APPROVAL
-                            agent_logs.append(Text(f"✅ Remediation plan APPROVED - Actions queued for execution", style="bold green"))
-                            full_log_history.append("✅ Remediation plan APPROVED - Actions queued for execution")
-                            engine.anomaly = None
-                            step_through_mode = False
-                            current_step_index = 0
-                            step_through_data = []
-                            layout["approval"].visible = False
-                            supervisor.human_approval_required = False
-                            supervisor.remediation_plan = None
-                            supervisor.current_incident = None
-                            active_agent = None
-                            agent_history = []
-                            current_incident = None
-                            incident_active = False
-                            show_step_through = False
-                            agents_active = False
-                            log_scroll_offset = 0
-                            viewing_full_log = False
+                        if key and key.lower() in ['y', 'n']:
+                            response = key.lower()
 
-                        elif response == 'n':
-                            # REJECTION
-                            agent_logs.append(Text(f"✅ Alert SILENCED", style="bold yellow"))
-                            full_log_history.append("✅ Alert SILENCED")
-                            step_through_mode = False
-                            current_step_index = 0
-                            step_through_data = []
-                            layout["approval"].visible = False
-                            supervisor.human_approval_required = False
-                            supervisor.remediation_plan = None
-                            supervisor.current_incident = None
-                            active_agent = None
-                            agent_history = []
-                            current_incident = None
-                            incident_active = False
-                            show_step_through = False
-                            agents_active = False
-                            log_scroll_offset = 0
-                            viewing_full_log = False
+                            if response == 'y':
+                                # APPROVAL
+                                agent_logs.append(Text(f"✅ Remediation plan APPROVED - Actions queued for execution", style="bold green"))
+                                full_log_history.append("✅ Remediation plan APPROVED - Actions queued for execution")
+                                engine.anomaly = None
+                                step_through_mode = False
+                                current_step_index = 0
+                                step_through_data = []
+                                layout["approval"].visible = False
+                                supervisor.human_approval_required = False
+                                supervisor.remediation_plan = None
+                                supervisor.current_incident = None
+                                active_agent = None
+                                agent_history = []
+                                current_incident = None
+                                incident_active = False
+                                show_step_through = False
+                                agents_active = False
+                                log_scroll_offset = 0
+                                viewing_full_log = False
 
-                        elif response == 's':
-                            # SUGGESTION - show input in approval panel
-                            suggestion_prompt = Panel(
-                                "[bold]Enter your suggested approach:\n(Use Ctrl+C to cancel)[/]",
-                                title="[bold yellow]Suggest Alternative[/bold yellow]"
-                            )
-                            layout["approval"].update(suggestion_prompt)
+                            elif response == 'n':
+                                # REJECTION
+                                agent_logs.append(Text(f"✅ Alert SILENCED", style="bold yellow"))
+                                full_log_history.append("✅ Alert SILENCED")
+                                step_through_mode = False
+                                current_step_index = 0
+                                step_through_data = []
+                                layout["approval"].visible = False
+                                supervisor.human_approval_required = False
+                                supervisor.remediation_plan = None
+                                supervisor.current_incident = None
+                                active_agent = None
+                                agent_history = []
+                                current_incident = None
+                                incident_active = False
+                                show_step_through = False
+                                agents_active = False
+                                log_scroll_offset = 0
+                                viewing_full_log = False
 
                 time.sleep(SIMULATION_SPEED if not paused else 0.1)
 
@@ -499,8 +489,8 @@ def create_pipeline_visualization(active_agent: Optional[str], completed_agents:
     agents = [
         ("Monitoring", "🔍"),
         ("Diagnostic", "🔬"),
-        ("Governance", "⚖️"),
         ("Remediation", "🔧"),
+        ("Governance", "⚖️"),
         ("Approval", "✅"),
     ]
 
@@ -579,15 +569,15 @@ def format_agent_logs(logger, supervisor_obj) -> Text:
 
         if agent == 'DiagnosticAgent':
             tools_str = f" using {', '.join(tools)}" if tools else ""
-            log_msg = f"📊 Diagnostic team analyzing incident{tools_str}... ({tokens} tokens)"
+            log_msg = f"📊 Diagnostic team analyzing incident..."
             logs.append(log_msg)
             full_log_history.append(log_msg)
         elif agent == 'RemediationAgent':
-            log_msg = f"🛠️ Remediation team creating action plan... ({tokens} tokens)"
+            log_msg = f"🛠️ Remediation team creating action plan..."
             logs.append(log_msg)
             full_log_history.append(log_msg)
         elif agent == 'GovernanceAgent':
-            log_msg = f"⚖️ Governance team reviewing for policy compliance... ({tokens} tokens)"
+            log_msg = f"⚖️ Governance team reviewing for policy compliance..."
             logs.append(log_msg)
             full_log_history.append(log_msg)
 
