@@ -62,39 +62,47 @@ llm_load_spinner = 0  # Spinner animation frame
 
 def read_key_with_escape() -> str:
     """Read a key, handling escape sequences for arrow keys."""
-    ch = sys.stdin.read(1)
-    if ch == '\x1b':  # ESC sequence
-        next_ch = sys.stdin.read(1)
-        if next_ch == '[':
-            final_ch = sys.stdin.read(1)
-            if final_ch == 'A':
-                return 'UP'
-            elif final_ch == 'B':
-                return 'DOWN'
-            elif final_ch == 'C':
-                return 'RIGHT'
-            elif final_ch == 'D':
-                return 'LEFT'
-        return 'ESC'
-    return ch
+    try:
+        ch = sys.stdin.read(1)
+        if not ch:
+            return ''
+
+        if ch == '\x1b':  # ESC sequence
+            try:
+                next_ch = sys.stdin.read(1)
+                if next_ch == '[':
+                    final_ch = sys.stdin.read(1)
+                    if final_ch == 'A':
+                        return 'UP'
+                    elif final_ch == 'B':
+                        return 'DOWN'
+                    elif final_ch == 'C':
+                        return 'RIGHT'
+                    elif final_ch == 'D':
+                        return 'LEFT'
+            except:
+                pass
+            return 'ESC'
+
+        return ch
+    except:
+        return ''
 
 def make_layout() -> Layout:
     """Defines the terminal UI layout."""
     layout = Layout(name="root")
-    layout.split(
+    layout.split_column(
         Layout(name="header", size=3),
-        Layout(ratio=1, name="main"),
-        Layout(name="pipeline", size=6),  # Agent pipeline visualization
-        Layout(size=12, name="approval"),  # Approval prompt
-        Layout(name="help", size=2),  # Command help panel
+        Layout(name="main", ratio=1),
+        Layout(name="pipeline", size=5),
+        Layout(name="approval", size=10),
+        Layout(name="help", size=2),
     )
-    layout["main"].split_row(Layout(name="left_panel"), Layout(name="right_panel"))
+    layout["main"].split_row(
+        Layout(name="left_panel", ratio=1),
+        Layout(name="right_panel", ratio=1)
+    )
     layout["approval"].visible = False
-    layout["approval"].update(Panel("", title="[bold red]Waiting for input[/bold red]"))
-
-    # Default help text
-    help_text = "[bold cyan]SPACE[/] next step  |  [bold cyan]↑↓[/] scroll logs  |  [bold cyan]l[/] full log  |  [bold cyan]y/n/s[/] decide  |  [bold cyan]p[/] pause  |  [bold cyan]ESC[/] exit log"
-    layout["help"].update(Panel(help_text, style="dim blue"))
 
     return layout
 
@@ -245,34 +253,35 @@ def run_simulation():
                 if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
                     key = read_key_with_escape()
 
-                    # Handle space bar for stepping through steps
-                    if key == ' ' and step_through_mode and awaiting_step_advance:
-                        if current_step_index < len(step_through_data) - 1:
-                            current_step_index += 1
-                        else:
-                            awaiting_step_advance = False
-                            layout["approval"].visible = True
+                    if key:  # Only process non-empty keys
+                        # Handle space bar for stepping through steps
+                        if key == ' ' and step_through_mode and awaiting_step_advance:
+                            if current_step_index < len(step_through_data) - 1:
+                                current_step_index += 1
+                            else:
+                                awaiting_step_advance = False
+                                layout["approval"].visible = True
 
-                    # Handle full log viewing
-                    elif key.lower() == 'l' and agents_active and not viewing_full_log:
-                        viewing_full_log = True
-                        log_scroll_offset = 0
+                        # Handle full log viewing
+                        if key.lower() == 'l' and agents_active and not viewing_full_log:
+                            viewing_full_log = True
+                            log_scroll_offset = 0
 
-                    # Handle ESC to exit log view
-                    elif key == 'ESC':
-                        viewing_full_log = False
-                        log_scroll_offset = 0
+                        # Handle ESC to exit log view
+                        if key == 'ESC':
+                            viewing_full_log = False
+                            log_scroll_offset = 0
 
-                    # Handle scrolling in full log view
-                    elif viewing_full_log:
-                        if key == 'UP':
-                            log_scroll_offset = max(0, log_scroll_offset - 3)
-                        elif key == 'DOWN':
-                            log_scroll_offset += 3
+                        # Handle scrolling in full log view
+                        if viewing_full_log:
+                            if key == 'UP':
+                                log_scroll_offset = max(0, log_scroll_offset - 3)
+                            elif key == 'DOWN':
+                                log_scroll_offset += 3
 
-                    # Handle pause
-                    if key.lower() == 'p':
-                        paused = not paused
+                        # Handle pause
+                        if key.lower() == 'p':
+                            paused = not paused
 
                 # Update header with pause status and token usage
                 pause_status = "[bold red] [PAUSED][/]" if paused else ""
@@ -376,20 +385,8 @@ def run_simulation():
                     step_through_data = generate_step_through_data(telemetry)
                     awaiting_step_advance = True
 
-                # --- Handle Space key for advancing through steps ---
-                if step_through_mode and awaiting_step_advance and not viewing_full_log:
-                    if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-                        key = sys.stdin.read(1)
-                        if key == ' ':  # Space key
-                            if current_step_index < len(step_through_data) - 1:
-                                # Advance to next step
-                                current_step_index += 1
-                            else:
-                                # All steps done, show approval in footer
-                                awaiting_step_advance = False
-                                layout["approval"].visible = True
-                        elif key.lower() == 'p':
-                            paused = not paused
+                # --- Handle Step-Through keyboard input (if not already handled above) ---
+                # This is handled in the main keyboard input section above
 
                 # --- Handle Approval Prompt in Approval Panel ---
                 if step_through_mode and not awaiting_step_advance and supervisor.human_approval_required:
