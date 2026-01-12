@@ -17,6 +17,7 @@ from typing import Optional
 
 from src.simulation.engine import SimulationEngine
 from src.agents.supervisor_agent import SupervisorAgent
+from src.agent_logger import AgentLogger
 from src.data_models import Incident, RemediationPlan
 
 # --- Constants ---
@@ -29,7 +30,8 @@ LOG_BUFFER_SIZE = 15
 random.seed(RANDOM_SEED)
 console = Console()
 engine = SimulationEngine(topology_file='config/topology.json')
-supervisor = SupervisorAgent()
+agent_logger = AgentLogger()
+supervisor = SupervisorAgent(logger=agent_logger)
 agent_logs = deque(maxlen=LOG_BUFFER_SIZE)
 paused = False
 
@@ -97,9 +99,15 @@ def run_simulation():
                     if key.lower() == 'p':
                         paused = not paused
 
-                # Update header with pause status
+                # Update header with pause status and token usage
                 pause_status = "[bold red] [PAUSED][/]" if paused else ""
-                header_text = Text("Watchtower MVP - AI Self-Healing Demo" + pause_status, justify="center", style="bold white")
+                token_usage = supervisor.llm_client.get_token_usage_summary()
+                tokens_display = f"[cyan]Tokens: {token_usage['total_tokens']}/{supervisor.max_budget}[/]"
+                header_text = Text(
+                    f"Watchtower MVP - AI Self-Healing Demo {tokens_display}{pause_status}",
+                    justify="center",
+                    style="bold white"
+                )
                 layout["header"].update(Panel(header_text, style="blue"))
 
                 # --- Run simulation step if not paused ---
@@ -126,7 +134,15 @@ def run_simulation():
 
                 # --- UI Updates ---
                 status_panel = Panel(create_status_table(telemetry), title="[bold green]Live Tower Status[/bold green]")
-                log_panel = Panel(Text("\n").join(agent_logs), title="[bold blue]Agent Log[/bold blue]")
+
+                # Get agent logs from logger
+                agent_log_lines = agent_logger.format_logs_for_ui(max_lines=LOG_BUFFER_SIZE)
+                if agent_log_lines:
+                    log_text = Text("\n".join(agent_log_lines), style="cyan")
+                else:
+                    log_text = Text("Waiting for incidents...", style="dim")
+
+                log_panel = Panel(log_text, title="[bold blue]LLM Agent Activity[/bold blue]")
                 layout["left_panel"].update(status_panel)
                 layout["right_panel"].update(log_panel)
 

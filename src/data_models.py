@@ -77,16 +77,13 @@ class Incident:
 class GovernanceDecision:
     """Governance checkpoint decision with policy compliance details.
 
-    Produced by Governance Agent at Checkpoints 1, 2, and 3;
-    consumed by Supervisor Agent and Audit Logger.
+    Produced by Governance Agent; consumed by Supervisor Agent.
     """
 
-    checkpoint_num: int  # 1, 2, or 3
-    decision: str  # "APPROVE", "REJECT", or "NEEDS_MORE_INFO"
+    decision: str  # "APPROVE", "REJECT_LOW_CONFIDENCE", "REJECT_BAD_PLAN", "REJECT_POLICY_VIOLATION"
+    reason_code: str  # Machine-readable reason code
     reason: str  # Human-readable explanation
-    policy_rules_checked: List[Dict] = field(default_factory=list)  # [{"rule_id": "CORE_PROTECTION", "status": "PASS"}, ...]
-    confidence_scores: Dict = field(default_factory=dict)  # {"diagnosis_confidence": 0.85, ...}
-    suggested_next_step: str = ""  # What Supervisor should do if rejected or needs info
+    policies_checked: List[str] = field(default_factory=list)  # List of policies evaluated
 
     def to_dict(self):
         """Convert to JSON-serializable dict."""

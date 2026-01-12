@@ -1,0 +1,79 @@
+POWER_OUTAGE:
+  description: "Complete loss of power at single cell site"
+  data_signature: "Single tower DOWN, power_level=0%, signal_strength=-120dBm, data_throughput=0Mbps"
+  common_causes:
+    - "Commercial grid outage at site location"
+    - "PSU (Power Supply Unit) hardware failure"
+    - "Lightning strike to power infrastructure"
+    - "Scheduled power maintenance"
+    - "Battery backup system failure"
+  confidence_indicators:
+    - "Power metric at exactly 0% is strong indicator"
+    - "Simultaneous loss of all metrics suggests complete power loss"
+    - "Affects single isolated site vs. cluster"
+  typical_duration: "30-120 minutes"
+  risk_level: "CRITICAL"
+
+FIBER_CUT:
+  description: "Severed fiber optic cable affecting multiple sites"
+  data_signature: "Multiple towers DOWN simultaneously, signal_strength=-120dBm, data_throughput=0Mbps, cascading failure pattern"
+  common_causes:
+    - "Construction equipment damage (backhoe fade)"
+    - "Rodent damage to cable sheath"
+    - "Natural disaster (earthquake, flooding)"
+    - "Vehicle accident severing cable"
+    - "Lightning strike to cable bundle"
+    - "Aging infrastructure failure"
+  confidence_indicators:
+    - "Multiple simultaneous failures suggest shared infrastructure"
+    - "Coordinated timing of outages"
+    - "Affects sites on same fiber route"
+  typical_duration: "45-300 minutes"
+  risk_level: "CRITICAL"
+
+SIGNAL_INTERFERENCE:
+  description: "RF interference degrading tower performance"
+  data_signature: "Single/multiple towers in ALARM status, signal_strength -70 to -80dBm, data_throughput 100-300Mbps, fluctuating metrics"
+  common_causes:
+    - "Adjacent spectrum transmitter interference (same band)"
+    - "Weather-induced atmospheric ducting"
+    - "Illegal broadcast station (pirate radio)"
+    - "Antenna alignment issue"
+    - "Equipment malfunction in RF chain"
+    - "Microwave link interference"
+  confidence_indicators:
+    - "Gradual degradation vs. sudden loss"
+    - "Fluctuating metrics suggest transient source"
+    - "Service partially available vs. complete outage"
+  typical_duration: "5-60 minutes"
+  risk_level: "HIGH"
+
+CORE_CONGESTION:
+  description: "Backhaul/core network capacity saturation"
+  data_signature: "High latency, packet loss 5-15%, throughput capped at backhaul limit, multiple sites affected"
+  common_causes:
+    - "Sustained high traffic (event, viral content)"
+    - "Backhaul equipment malfunction"
+    - "Routing misconfiguration"
+    - "DDoS attack on network"
+    - "Adjacent network interfering with backhaul"
+  confidence_indicators:
+    - "Affects multiple sites on same backhaul"
+    - "Capacity metrics at maximum"
+  typical_duration: "15-180 minutes"
+  risk_level: "HIGH"
+
+EQUIPMENT_FAILURE:
+  description: "Hardware malfunction at cell site"
+  data_signature: "Single site in ALARM or DOWN, selective metric failure (e.g., power OK but signal degraded)"
+  common_causes:
+    - "RRU (Radio Remote Unit) failure"
+    - "Baseband unit malfunction"
+    - "Antenna connection issue"
+    - "Cooling system failure (overheating)"
+    - "Module firmware corruption"
+  confidence_indicators:
+    - "Isolated to single site"
+    - "Selective metric failure (not all down)"
+  typical_duration: "15-90 minutes"
+  risk_level: "MEDIUM"
