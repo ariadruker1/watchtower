@@ -1,3 +1,8 @@
+"""
+Simulation Engine: Simulates a network with towers and creates fake network metrics so we can test
+how well the system diagnoses and fixes different problems without needing a real network.
+"""
+
 import json
 import random
 

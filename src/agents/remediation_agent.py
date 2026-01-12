@@ -1,4 +1,7 @@
-"""Remediation Agent: AI-powered solution planning for network incidents."""
+"""
+Remediation Agent: Takes the diagnosis and creates a detailed action plan including specific steps to fix it,
+preventative measures to stop it happening again, and verification steps to confirm it's fixed.
+"""
 
 import json
 from typing import Optional
@@ -25,8 +28,8 @@ class RemediationAgent:
         system_prompt = """You are a pragmatic operations lead. Your ONLY job is to create remediation plans.
 CRITICAL: Respond with ONLY a JSON object (no text before or after).
 Use tools to get runbook and engineer schedule, then output JSON with exactly these fields:
-- actions: Array of action strings
-- rollback_plan: Rollback procedure string
+- actions: Array of action strings describing immediate remediation steps. Use V### format for vehicles (e.g., V001, V002), not T### format.
+- future_preventative_measures: Array of preventative measures to reduce likelihood of recurrence
 - verification_steps: Array of verification step strings
 - plan_confidence: 0.0-1.0
 - risk_assessment: Risk assessment string
@@ -42,7 +45,7 @@ Diagnosis Confidence: {incident.diagnosis_confidence}
 {f"Feedback: {feedback}" if feedback else ""}
 
 Use tools to get runbook and engineer availability, then respond with ONLY this JSON format (no prose):
-{{"actions": ["action1", "action2"], "rollback_plan": "procedure", "verification_steps": ["step1", "step2"], "plan_confidence": 0.85, "risk_assessment": "assessment"}}
+{{"actions": ["action1 using V001", "action2"], "future_preventative_measures": ["measure1", "measure2"], "verification_steps": ["step1", "step2"], "plan_confidence": 0.85, "risk_assessment": "assessment"}}
 
 ONLY JSON. NO OTHER TEXT."""
 
@@ -118,10 +121,10 @@ ONLY JSON. NO OTHER TEXT."""
         else:
             final_response = response.get('content', '')
 
-        # Log interaction
+        # Log interaction - pass full response for extraction
         if self.logger:
             self.logger.log_interaction(
-                'RemediationAgent', user_message[:150], str(final_response)[:150],
+                'RemediationAgent', user_message[:150], str(final_response),
                 tool_calls_made, total_tokens, True
             )
 
@@ -160,7 +163,7 @@ ONLY JSON. NO OTHER TEXT."""
                     after_state_expected={},
                     execution_steps=[]
                 )],
-                rollback_plan=plan_data.get('rollback_plan', 'Manual rollback required'),
+                rollback_plan="\n".join(plan_data.get('future_preventative_measures', ['Implement monitoring improvements'])),
                 verification_steps=plan_data.get('verification_steps', []),
                 plan_confidence=min(max(plan_data.get('plan_confidence', incident.diagnosis_confidence), 0), 1.0)
             )

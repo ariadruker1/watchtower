@@ -1,4 +1,7 @@
-"""Diagnostic Agent: AI-powered root cause analysis for network incidents."""
+"""
+Diagnostic Agent: Investigates network alerts by checking weather, maintenance history, and patterns
+to figure out what's actually broken and assigns a confidence score to that diagnosis.
+"""
 
 import json
 from typing import Optional, List
@@ -120,10 +123,10 @@ ONLY JSON. NO OTHER TEXT."""
         else:
             final_response = response.get('content', '')
 
-        # Log interaction
+        # Log interaction - pass full response for extraction
         if self.logger:
             self.logger.log_interaction(
-                'DiagnosticAgent', user_message[:150], str(final_response)[:150],
+                'DiagnosticAgent', user_message[:150], str(final_response),
                 tool_calls_made, total_tokens, True
             )
 

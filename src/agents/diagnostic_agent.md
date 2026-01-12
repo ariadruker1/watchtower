@@ -1,14 +1,26 @@
 # DiagnosticAgent
 
-Pattern-matching rule engine for incident diagnosis.
+Investigates network alerts using Claude AI + tools to determine root cause.
 
-## Rules
-1. Multiple towers DOWN → FIBER_CUT (confidence: 0.90)
-2. Single tower DOWN + power_level = 0 → POWER_OUTAGE (confidence: 0.95)
-3. Tower in ALARM → SIGNAL_INTERFERENCE (confidence: 0.85)
-4. Default single tower DOWN → POWER_OUTAGE (confidence: 0.80)
+## Flow
+```
+Alert → Claude + Tools → JSON Parse → Incident (with confidence)
+```
+
+## Tools Used
+- `get_weather_at_tower` - Weather conditions
+- `get_tower_maintenance_history` - Recent maintenance
+- `lookup_telecom_pattern` - Known failure patterns
+- `check_regional_news_alerts` - External events
 
 ## Output
-`Incident` object with `root_cause_hypothesis` and `diagnosis_confidence`
+`Incident` object with:
+- `root_cause_hypothesis` (natural language)
+- `diagnosis_confidence` (0.0-1.0)
+- `affected_cell_ids` (list)
+- `evidence` (supporting data)
 
-**Note**: Tools in tools.py are currently unused. Future work: call tools to gather evidence and dynamically adjust confidence.
+## Key Features
+- Multi-round tool calling
+- Evidence-based confidence scoring
+- Feedback loop: accepts rejection reason and re-diagnoses for higher confidence

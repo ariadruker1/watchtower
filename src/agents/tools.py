@@ -1,4 +1,7 @@
-"""Tools for agents to call via Claude tool_use."""
+"""
+Tools: Provides agents with functions to look up real information like weather, maintenance history, policies,
+and engineer schedules so they base their decisions on facts instead of making things up.
+"""
 
 import random
 import yaml
@@ -213,9 +216,9 @@ def get_standard_operating_procedure(incident_type: str) -> Dict[str, Any]:
 def get_on_call_engineer_schedule() -> Dict[str, Any]:
     """Checks the schedule to find which specialist teams are available for dispatch."""
     teams = [
-        "Team Alpha (Fiber Optics Specialists)",
-        "Team Bravo (Power and Electrical Specialists)",
-        "Team Charlie (RF and Spectrum Specialists)"
+        "Response Team Alpha (Fiber Optics Specialists)",
+        "Response Team Bravo (Power and Electrical Specialists)",
+        "Service Unit Charlie (RF and Spectrum Specialists)"
     ]
     available_team = random.choice(teams)
     return {

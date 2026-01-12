@@ -2,19 +2,18 @@
 
 ## 1. Create `.env` File
 
-Copy the template file:
 ```bash
 cp .env.example .env
 ```
 
-## 2. Add Your OpenAI API Key
+## 2. Add Your Anthropic API Key
 
-Edit `.env` and add your OpenAI API key:
+Edit `.env`:
 ```
-OPENAI_API_KEY=sk-your-actual-api-key-here
+ANTHROPIC_API_KEY=sk-ant-your-actual-api-key-here
 ```
 
-Get your key from: https://platform.openai.com/api-keys
+Get key: https://console.anthropic.com/account/keys
 
 ## 3. Install Dependencies
 
@@ -22,41 +21,32 @@ Get your key from: https://platform.openai.com/api-keys
 pip install -r requirements.txt
 ```
 
-## 4. Run the Demo
+## 4. Run Demo
 
 ```bash
+# Detailed step-through with agent reasoning
+python step_through_demo.py
+
+# OR simple demo with approval prompts only
 python run_demo.py
 ```
 
-## Security Notes
+## Security
 
-- **Never commit `.env`** - it's in `.gitignore` and contains secrets
-- **Keep `sk-...` key private** - treat it like a password
-- **Use `.env.example`** to show what config keys are needed (without values)
+- **Never commit `.env`** (in `.gitignore`)
+- **Keep `sk-ant-...` key private**
+- **Use `.env.example`** to document needed keys (without values)
 
 ## Troubleshooting
 
-**"OpenAI API key not found"**
-- Check that `.env` file exists in same directory as `run_demo.py`
-- Verify `OPENAI_API_KEY=sk-...` is in `.env`
-- No quotes needed around the API key
+| Error | Solution |
+|-------|----------|
+| "Anthropic API key not found" | Check `.env` exists in root directory |
+| "Invalid API key" | Verify at https://console.anthropic.com/account/keys |
+| "No module named anthropic" | Run `pip install -r requirements.txt` |
 
-**"Invalid API key"**
-- Verify key from https://platform.openai.com/api-keys
-- Make sure it's not truncated or has extra whitespace
-- Check that key starts with `sk-`
+## Cost
 
-**Import error: "No module named dotenv"**
-```bash
-pip install python-dotenv
-```
-
-## Cost Estimation
-
-With GPT-3.5-turbo at $0.5 per 1M input + $1.5 per 1M output tokens:
-
-- **$10**: ~15,000-20,000 incidents
-- **$1**: ~1,500-2,000 incidents
-- **~$0.0005 per incident**
-
-Monitor usage at: https://platform.openai.com/account/billing/usage
+Claude 3.5 Haiku pricing (estimate):
+- **$0.0008 per incident** (~10,000 incidents per $8)
+- Monitor usage: https://console.anthropic.com/account/usage

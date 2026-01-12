@@ -1,92 +1,77 @@
 # Watchtower MVP
 
-AI-powered incident management demo for telecom network outages using OpenAI GPT-3.5-turbo.
+AI-powered incident management demo for telecom network outages using Claude AI.
 
-## Setup
+## Quick Start
 
 ```bash
 cd watchtower_mvp
 pip install -r requirements.txt
-export OPENAI_API_KEY="your-openai-api-key-here"
-python run_demo.py
+export ANTHROPIC_API_KEY="your-api-key"
+python step_through_demo.py
 ```
 
-**Cost**: ~$0.0005 per incident with GPT-3.5-turbo (~20K incidents per $10)
+**Controls**: SPACE=advance, SPACE (approval)=auto-approve, y/n=human decision, l=logs, p=pause, ESC=close logs
 
-**Controls**: Press 'p' to pause, Ctrl+C to exit, 'Y/N' for approval prompts.
-
-## Architecture
-
-5 LLM-powered agents orchestrate incident response with token budgeting (1500 tokens/incident):
+## How It Works
 
 ```
-Telemetry → Monitoring → Diagnostic (400 tokens) → Governance (250 tokens)
-  → Remediation (400 tokens) → Human Approval
+Telemetry → Monitoring → Diagnostic → Remediation → Governance
+                             ↑                          ↓
+                             └──── Feedback Loop ──────┘
+                             ↓
+                         Human Approval (y/n)
 ```
 
-### MonitoringAgent
-- Detects metric anomalies via threshold checks
-- Returns `Alert` objects
+| Agent | Does | Output |
+|-------|------|--------|
+| **Monitoring** | Detects anomalies | Alert |
+| **Diagnostic** | Root cause analysis + tools | Incident (confidence 0.0-1.0) |
+| **Remediation** | Creates action plan | RemediationPlan (actions + preventative measures) |
+| **Governance** | Validates policy compliance | GovernanceDecision (approve/reject) |
+| **Supervisor** | Orchestrates all agents | Feedback loops + confidence boosting |
 
-### DiagnosticAgent (OpenAI + Tool Use)
-- Uses tools: weather, maintenance history, news alerts, telecom pattern KB
-- Claude-like persona: "veteran field engineer"
-- Returns `Incident` with confidence score (0.0-1.0)
-- Feedback loop: Can re-diagnose with evidence if rejected by governance
+## Key Features
 
-### GovernanceAgent (OpenAI + Tool Use)
-- Policy compliance validation (min confidence 0.8)
-- Returns `GovernanceDecision` with reason code
-- Can reject for: low confidence, bad plan, policy violations
+- **LLM Tool Use**: Agents call tools for weather, maintenance, policies, schedules
+- **Feedback Loops**: Rejected plans loop back to diagnostic for improvement
+- **Confidence Boosting**: Persistent incidents (+20% confidence, capped at 1.0)
+- **Token Tracking**: Enforced per-incident budget
+- **3-Stage Logs**: Received → Investigated → Suggestions (natural language)
 
-### RemediationAgent (OpenAI + Tool Use)
-- Multi-step action planning from runbooks
-- Consults engineer availability
-- Returns `RemediationPlan` with rollback strategy
+## Tools Available
 
-### SupervisorAgent
-- Orchestrates multi-agent workflow
-- Enforces token budget (stops if approaching 1500 tokens)
-- Implements feedback loops (max 1 retry per rejection)
-- Confidence boosting: +20% on persistent incidents (within 10s)
-- Displays token usage in UI header
+- `get_weather_at_tower` | `get_tower_maintenance_history` | `lookup_telecom_pattern`
+- `check_regional_news_alerts` | `get_standard_operating_procedure`
+- `get_on_call_engineer_schedule` | `get_company_policy_document`
 
-## LLM Features
+## Configuration
 
-- **Model**: GPT-3.5-turbo (cost-optimized)
-- **Tool Use**: Autonomous function calling for agents
-- **Token Tracking**: Per-agent and per-incident budgets
-- **Logging**: All prompts, responses, tool calls logged to memory + UI
-- **Feedback Loops**: Agents can request more analysis before governance approval
+- `config/topology.json` - Network (5 towers)
+- `config/telecom_patterns.yaml` - Incident patterns
+- `config/runbooks.yaml` - Response procedures
 
-## Configuration Files
+## Anomaly Types
 
-- `config/policy.yaml` - Policy thresholds (min_confidence: 0.8)
-- `config/runbooks.yaml` - Incident response procedures
-- `config/topology.json` - 5-tower NYC network
-- `config/telecom_patterns.yaml` - Knowledge base of failure patterns
-
-## UI Display
-
-- **Header**: Token usage counter, pause status
-- **Left Panel**: Live tower status table (OK/ALARM/DOWN)
-- **Right Panel**: LLM agent activity log (agent names, token usage, tools called)
-- **Footer**: Human approval prompt (on demand)
+| Type | Effect |
+|------|--------|
+| **POWER_OUTAGE** | Power level → 10-40% |
+| **FIBER_CUT** | Signal + throughput → 20-50% |
+| **SIGNAL_INTERFERENCE** | Signal → -130 to -90 dBm |
 
 ## Feedback Loop Example
 
-1. DiagnosticAgent diagnoses POWER_OUTAGE (confidence: 0.75)
-2. GovernanceAgent rejects: "Confidence 0.75 < threshold 0.8"
-3. SupervisorAgent asks Diagnostic to re-analyze with feedback
-4. Diagnostic uses more tools, boosts confidence to 0.82
-5. GovernanceAgent approves
-6. RemediationAgent creates plan
-7. Human operator approves/rejects
+1. Diagnostic: POWER_OUTAGE (confidence 0.75)
+2. Governance: ❌ "Confidence < 0.8"
+3. Supervisor: Re-run diagnostic with feedback
+4. Diagnostic: ✓ Confidence → 0.85 (found more evidence)
+5. Remediation: Creates plan
+6. Human: y/n approval
 
 ## Known Limitations
 
-- ExecutionAgent not implemented (plan is approved but not executed)
-- No post-execution impact tracking
+- ExecutionAgent not implemented (plan approved but not executed in network)
 - No persistent audit trail (logs cleared per incident)
+- Sequential pipeline (no parallel agent execution)
 
-See `PLAN.md` and `GAPS_AND_IMPROVEMENTS.md` for full roadmap.
+See `FAQ.md` for detailed technical Q&A.

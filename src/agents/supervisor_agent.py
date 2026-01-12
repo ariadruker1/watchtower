@@ -1,4 +1,7 @@
-"""Supervisor Agent: Orchestrator of incident response workflow with token budgeting."""
+"""
+Supervisor Agent: The command center that runs all other agents in sequence to diagnose and fix network problems,
+sending rejected plans back for improvement until everything is approved and ready for human review.
+"""
 
 from .monitoring_agent import MonitoringAgent
 from .diagnostic_agent import DiagnosticAgent
@@ -117,21 +120,33 @@ class SupervisorAgent:
         # --- Governance Evaluation ---
         governance_decision = self.governance_agent.evaluate(incident, plan)
 
-        # Handle governance rejection with feedback loop (max 1 retry)
+        # Handle governance rejection with feedback loop - retry diagnostic for any rejection
         if governance_decision.decision != 'APPROVE':
-            if governance_decision.decision == 'REJECT_LOW_CONFIDENCE' and self._check_token_budget():
-                # Try diagnostic again with feedback
-                feedback = f"Initial confidence {incident.diagnosis_confidence} was rejected. Need stronger evidence."
+            if self._check_token_budget():
+                # Try diagnostic again with feedback from governance
+                feedback = f"Governance rejected: {governance_decision.reason}. Need stronger diagnostic evidence and confidence (current: {incident.diagnosis_confidence:.2f})."
                 incident2 = self.diagnostic_agent.diagnose_alerts(alerts, feedback)
                 if incident2 and incident2.diagnosis_confidence > incident.diagnosis_confidence:
                     incident = incident2
-                    log_message += " | Re-diagnosed with higher confidence."
+                    self.current_incident = incident
+                    log_message += " | Re-diagnosed with higher confidence based on governance feedback."
 
-                    # Re-evaluate governance
+                    # Create new remediation plan with higher confidence diagnosis
+                    plan = self.remediation_agent.create_plan(incident)
+                    if not plan:
+                        log_message += " | Failed to create revised remediation plan."
+                        return log_message
+
+                    # Re-evaluate governance with new plan
                     if not self._check_token_budget():
                         log_message += " | Token budget limit reached after diagnostic retry."
+                        return log_message
                     else:
                         governance_decision = self.governance_agent.evaluate(incident, plan)
+                        log_message += " | Governance re-evaluation completed."
+                else:
+                    log_message += " | Could not obtain higher confidence diagnosis."
+                    return log_message
 
             if governance_decision.decision != 'APPROVE':
                 log_message += f" | Governance: {governance_decision.reason_code} - {governance_decision.reason}"

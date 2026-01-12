@@ -1,8 +1,6 @@
 """
-Incident management dataclasses for Watchtower MVP.
-
-Defines the agent interface payloads for the incident lifecycle,
-and network entity dataclasses for the physical/logical network topology components.
+Data Models: Defines the structure of all objects flowing through the system (alerts, diagnoses, plans, decisions)
+so all agents speak the same language and can reliably pass information to each other.
 """
 
 from dataclasses import dataclass, asdict, field
@@ -75,7 +73,7 @@ class Incident:
 
 @dataclass
 class GovernanceDecision:
-    """Governance checkpoint decision with policy compliance details.
+    """Governance checkpoint decision with policy and legal compliance details.
 
     Produced by Governance Agent; consumed by Supervisor Agent.
     """
@@ -84,6 +82,7 @@ class GovernanceDecision:
     reason_code: str  # Machine-readable reason code
     reason: str  # Human-readable explanation
     policies_checked: List[str] = field(default_factory=list)  # List of policies evaluated
+    legal_requirements_reviewed: List[str] = field(default_factory=list)  # List of legal/regulatory requirements reviewed
 
     def to_dict(self):
         """Convert to JSON-serializable dict."""

@@ -1,3 +1,8 @@
+"""
+Monitoring Agent: Watches network metrics like power and signal strength, then generates alerts
+whenever anything looks abnormal so the system can investigate and fix the problem.
+"""
+
 from src.data_models import Alert
 import time
 

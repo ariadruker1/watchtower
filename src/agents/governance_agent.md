@@ -1,13 +1,25 @@
 # GovernanceAgent
 
-Single policy check: confidence threshold validation.
+Reviews remediation plans against company policies and legal requirements.
 
-## Policy Rule
-- **min_confidence_threshold** (from policy.yaml, default 0.8)
-- Approve if: `incident.diagnosis_confidence >= threshold`
-- Reject if: below threshold
+## Flow
+```
+(Incident + Plan) → Claude → JSON Parse → GovernanceDecision
+```
+
+## Tools Used
+- `get_company_policy_document` - Company policies
+- Policy research for compliance checks
+- Legal/regulatory requirements validation
 
 ## Output
-Boolean pass/fail (no GovernanceDecision object created yet)
+`GovernanceDecision` object with:
+- `decision` - APPROVE | REJECT_LOW_CONFIDENCE | REJECT_BAD_PLAN | REJECT_POLICY_VIOLATION
+- `reason` - Why approved or rejected
+- `policies_checked[]` - Which policies were validated
+- `legal_requirements_reviewed[]` - Which regulations checked
 
-**Note**: Only one policy enforced. Future work: expand to multi-rule policy validation with formal GovernanceDecision logging.
+## Key Features
+- Pragmatic: approves reasonable plans, rejects only serious violations
+- Provides feedback reason: passed back to diagnostic for plan improvement
+- Multi-stakeholder foundation (extensible to security, SLA agents)

@@ -1,4 +1,7 @@
-"""Governance Agent: Policy compliance validation for incidents and remediation plans."""
+"""
+Governance Agent: Reviews the remediation plan against company policies and legal requirements,
+then either approves it or rejects it with reasons so it can be improved before human review.
+"""
 
 import json
 from typing import Optional
@@ -27,17 +30,19 @@ class GovernanceAgent:
             )
 
         # Build system prompt with persona
-        system_prompt = """You are a meticulous compliance auditor. Your ONLY job is to validate policies.
+        system_prompt = """You are a pragmatic compliance officer. Your job is to approve reasonable remediation plans while ensuring basic safety and legal requirements.
 CRITICAL: Respond with ONLY a JSON object (no text before or after).
-Check policies and return JSON with exactly these fields:
+Favor APPROVAL for reasonable plans that address the incident. Only reject if there are serious safety or legal violations.
+Return JSON with exactly these fields:
 - decision: APPROVE, REJECT_LOW_CONFIDENCE, REJECT_BAD_PLAN, or REJECT_POLICY_VIOLATION
 - reason_code: Code for decision
 - reason: Brief explanation
 - policies_checked: Array of policy names checked
+- legal_requirements_reviewed: Array of legal/regulatory requirements reviewed
 NO PROSE. ONLY JSON."""
 
         # Build user message
-        user_message = f"""Review this incident and remediation plan for policy compliance:
+        user_message = f"""Review this incident and remediation plan. APPROVE if the plan is reasonable and addresses the incident.
 
 Incident: {incident.incident_type}
   Confidence: {incident.diagnosis_confidence}
@@ -45,8 +50,13 @@ Incident: {incident.incident_type}
 
 {f"Plan: {str(plan.to_dict())[:200]}" if plan else "No plan"}
 
-Use policy tools if needed, then respond with ONLY this JSON format (no prose):
-{{"decision": "APPROVE|REJECT_LOW_CONFIDENCE|REJECT_BAD_PLAN|REJECT_POLICY_VIOLATION", "reason_code": "code", "reason": "reason", "policies_checked": ["policy1"]}}
+Quickly verify:
+1. Plan addresses the incident type
+2. No obvious safety violations
+3. Plan is feasible
+
+Respond with ONLY this JSON format (no prose):
+{{"decision": "APPROVE|REJECT_LOW_CONFIDENCE|REJECT_BAD_PLAN|REJECT_POLICY_VIOLATION", "reason_code": "code", "reason": "reason", "policies_checked": ["policy1"], "legal_requirements_reviewed": ["requirement1"]}}
 
 ONLY JSON. NO OTHER TEXT."""
 
@@ -127,10 +137,10 @@ ONLY JSON. NO OTHER TEXT."""
         else:
             final_response = response.get('content', '')
 
-        # Log interaction
+        # Log interaction - pass full response for extraction
         if self.logger:
             self.logger.log_interaction(
-                'GovernanceAgent', user_message[:150], str(final_response)[:150],
+                'GovernanceAgent', user_message[:150], str(final_response),
                 tool_calls_made, total_tokens, True
             )
 
@@ -162,7 +172,8 @@ ONLY JSON. NO OTHER TEXT."""
                 decision=decision_data.get('decision', 'REJECT'),
                 reason_code=decision_data.get('reason_code', 'UNKNOWN'),
                 reason=decision_data.get('reason', 'Policy violation'),
-                policies_checked=decision_data.get('policies_checked', [])
+                policies_checked=decision_data.get('policies_checked', []),
+                legal_requirements_reviewed=decision_data.get('legal_requirements_reviewed', [])
             )
 
             return decision

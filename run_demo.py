@@ -1,3 +1,8 @@
+"""
+Run Demo: Runs a basic version of the incident response system that shows network status and asks for approval decisions,
+without the detailed step-through UI to see agent reasoning.
+"""
+
 import time
 import random
 import sys

@@ -1,4 +1,7 @@
-"""OpenAI API wrapper with function calling support and token tracking."""
+"""
+LLM Client: Handles all communication with Claude AI, keeps track of how many tokens are used,
+and parses Claude's responses including any tool calls it wants to make.
+"""
 
 from openai import OpenAI
 import json
