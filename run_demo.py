@@ -5,6 +5,10 @@ import select
 import tty
 import termios
 from collections import deque
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from rich.console import Console
 from rich.layout import Layout
