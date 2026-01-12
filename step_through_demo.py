@@ -48,6 +48,36 @@ active_agent = None  # Which agent is currently processing
 agent_history = []  # Track which agents have completed
 current_incident = None
 
+# Step-through state tracking
+step_through_mode = False
+current_step_index = 0
+step_through_data = []
+awaiting_step_advance = False
+agents_active = False  # True when diagnostic agent starts processing
+log_scroll_offset = 0  # Scroll position in agent logs
+full_log_history = deque(maxlen=1000)  # Keep all log messages ever displayed
+viewing_full_log = False  # True when 'l' is pressed to show full history
+loading_llm = False  # True when waiting for LLM response
+llm_load_spinner = 0  # Spinner animation frame
+
+def read_key_with_escape() -> str:
+    """Read a key, handling escape sequences for arrow keys."""
+    ch = sys.stdin.read(1)
+    if ch == '\x1b':  # ESC sequence
+        next_ch = sys.stdin.read(1)
+        if next_ch == '[':
+            final_ch = sys.stdin.read(1)
+            if final_ch == 'A':
+                return 'UP'
+            elif final_ch == 'B':
+                return 'DOWN'
+            elif final_ch == 'C':
+                return 'RIGHT'
+            elif final_ch == 'D':
+                return 'LEFT'
+        return 'ESC'
+    return ch
+
 def make_layout() -> Layout:
     """Defines the terminal UI layout."""
     layout = Layout(name="root")
@@ -55,10 +85,17 @@ def make_layout() -> Layout:
         Layout(name="header", size=3),
         Layout(ratio=1, name="main"),
         Layout(name="pipeline", size=6),  # Agent pipeline visualization
-        Layout(size=12, name="footer"),  # Approval prompt
+        Layout(size=12, name="approval"),  # Approval prompt
+        Layout(name="help", size=2),  # Command help panel
     )
     layout["main"].split_row(Layout(name="left_panel"), Layout(name="right_panel"))
-    layout["footer"].visible = False
+    layout["approval"].visible = False
+    layout["approval"].update(Panel("", title="[bold red]Waiting for input[/bold red]"))
+
+    # Default help text
+    help_text = "[bold cyan]SPACE[/] next step  |  [bold cyan]↑↓[/] scroll logs  |  [bold cyan]l[/] full log  |  [bold cyan]y/n/s[/] decide  |  [bold cyan]p[/] pause  |  [bold cyan]ESC[/] exit log"
+    layout["help"].update(Panel(help_text, style="dim blue"))
+
     return layout
 
 def create_status_table(telemetry_data: dict) -> Table:
@@ -89,13 +126,12 @@ def create_status_table(telemetry_data: dict) -> Table:
         )
     return table
 
-def show_agent_step_through(telemetry_data: dict):
-    """Show detailed step-through of agent processing."""
-    console.print("\n[bold cyan]═══════════════════════════════════════════════════════════[/]")
-    console.print("[bold cyan]DETAILED AGENT PROCESSING STEP-THROUGH[/]")
-    console.print("[bold cyan]═══════════════════════════════════════════════════════════[/]\n")
+def generate_step_through_data(telemetry_data: dict) -> list:
+    """Generate step-through data for each agent processing step.
 
-    # Get all agent logs
+    Returns a list of step dictionaries, each containing the formatted step text.
+    """
+    steps = []
     logs = agent_logger.get_incident_logs()
 
     for i, log in enumerate(logs, 1):
@@ -104,20 +140,20 @@ def show_agent_step_through(telemetry_data: dict):
         tools = log['tools_called']
         response = log['response']
 
-        console.print(f"[bold green]► Step {i}: {agent}[/]")
-        console.print("[bold]─────────────────────────────────────────[/]")
+        step_text = f"[bold green]► Step {i}: {agent}[/]\n"
+        step_text += "[bold]─────────────────────────────────────────[/]\n"
 
         # Show what agent is doing
         if agent == 'DiagnosticAgent':
-            console.print("[cyan]Action:[/] Diagnosing root cause from alerts")
+            step_text += "[cyan]Action:[/] Diagnosing root cause from alerts\n"
             if tools:
-                console.print(f"[cyan]Tools called:[/] {', '.join(tools)}")
-            console.print(f"[cyan]Tokens used:[/] {tokens}\n")
+                step_text += f"[cyan]Tools called:[/] {', '.join(tools)}\n"
+            step_text += f"[cyan]Tokens used:[/] {tokens}\n\n"
 
             # Extract and show the incident object
             incident = supervisor.current_incident
             if incident:
-                console.print("[bold]Incident Details:[/]")
+                step_text += "[bold]Incident Details:[/]\n"
                 incident_data = {
                     "incident_type": incident.incident_type,
                     "severity": incident.severity,
@@ -126,40 +162,40 @@ def show_agent_step_through(telemetry_data: dict):
                     "root_cause_hypothesis": incident.root_cause_hypothesis,
                     "evidence": incident.evidence,
                 }
-                console.print("[yellow]" + json.dumps(incident_data, indent=2) + "[/]\n")
+                step_text += "[yellow]" + json.dumps(incident_data, indent=2) + "[/]\n\n"
 
-            console.print("[bold green]✓ Diagnostic complete[/]")
-            console.print("[cyan]Output:[/] Incident object → Remediation Agent\n")
+            step_text += "[bold green]✓ Diagnostic complete[/]\n"
+            step_text += "[cyan]Output:[/] Incident object → Remediation Agent"
 
         elif agent == 'RemediationAgent':
-            console.print("[cyan]Action:[/] Creating remediation plan")
+            step_text += "[cyan]Action:[/] Creating remediation plan\n"
             if tools:
-                console.print(f"[cyan]Tools called:[/] {', '.join(tools)}")
-            console.print(f"[cyan]Tokens used:[/] {tokens}\n")
+                step_text += f"[cyan]Tools called:[/] {', '.join(tools)}\n"
+            step_text += f"[cyan]Tokens used:[/] {tokens}\n\n"
 
             # Extract and show the plan object
             plan = supervisor.remediation_plan
             if plan:
-                console.print("[bold]Remediation Plan Details:[/]")
+                step_text += "[bold]Remediation Plan Details:[/]\n"
                 plan_data = {
                     "actions": [a.description for a in plan.actions],
                     "rollback_plan": plan.rollback_plan,
                     "plan_confidence": plan.plan_confidence,
                     "verification_steps": plan.verification_steps,
                 }
-                console.print("[yellow]" + json.dumps(plan_data, indent=2) + "[/]\n")
+                step_text += "[yellow]" + json.dumps(plan_data, indent=2) + "[/]\n\n"
 
-            console.print("[bold green]✓ Remediation complete[/]")
-            console.print("[cyan]Output:[/] RemediationPlan object → Governance Agent\n")
+            step_text += "[bold green]✓ Remediation complete[/]\n"
+            step_text += "[cyan]Output:[/] RemediationPlan object → Governance Agent"
 
         elif agent == 'GovernanceAgent':
-            console.print("[cyan]Action:[/] Validating against company policies")
+            step_text += "[cyan]Action:[/] Validating against company policies\n"
             if tools:
-                console.print(f"[cyan]Tools called:[/] {', '.join(tools)}")
-            console.print(f"[cyan]Tokens used:[/] {tokens}\n")
+                step_text += f"[cyan]Tools called:[/] {', '.join(tools)}\n"
+            step_text += f"[cyan]Tokens used:[/] {tokens}\n\n"
 
             # Extract decision info from response text
-            console.print("[bold]Governance Decision Details:[/]")
+            step_text += "[bold]Governance Decision Details:[/]\n"
             # Try to parse decision from response
             if "APPROVE" in response.upper():
                 decision_str = "APPROVE"
@@ -172,20 +208,20 @@ def show_agent_step_through(telemetry_data: dict):
                 "decision": decision_str,
                 "response_summary": response[:200] + "..." if len(response) > 200 else response,
             }
-            console.print("[yellow]" + json.dumps(decision_data, indent=2) + "[/]\n")
+            step_text += "[yellow]" + json.dumps(decision_data, indent=2) + "[/]\n\n"
 
-            console.print("[bold green]✓ Governance complete[/]")
-            console.print("[cyan]Output:[/] GovernanceDecision → Human Approval\n")
+            step_text += "[bold green]✓ Governance complete[/]\n"
+            step_text += "[cyan]Output:[/] GovernanceDecision → Human Approval"
 
-        # Prompt to continue
-        try:
-            console.input(f"[bold yellow]Press Enter to continue...[/]")
-        except EOFError:
-            pass
+        steps.append({"index": i, "agent": agent, "text": step_text})
+
+    return steps
 
 def run_simulation():
     """Main function to run the simulation and render the UI."""
     global paused, active_agent, agent_history, current_incident
+    global step_through_mode, current_step_index, step_through_data, awaiting_step_advance
+    global agents_active, log_scroll_offset, viewing_full_log, loading_llm, llm_load_spinner
     layout = make_layout()
     telemetry = {} # Initialize telemetry
 
@@ -203,9 +239,38 @@ def run_simulation():
         with Live(layout, screen=True, redirect_stderr=False, vertical_overflow="visible") as live:
             while True:
                 tick_counter += 1
-                # --- Handle keyboard input for pausing ---
+                llm_load_spinner += 1  # Animate spinner
+
+                # --- Handle keyboard input ---
                 if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-                    key = sys.stdin.read(1)
+                    key = read_key_with_escape()
+
+                    # Handle space bar for stepping through steps
+                    if key == ' ' and step_through_mode and awaiting_step_advance:
+                        if current_step_index < len(step_through_data) - 1:
+                            current_step_index += 1
+                        else:
+                            awaiting_step_advance = False
+                            layout["approval"].visible = True
+
+                    # Handle full log viewing
+                    elif key.lower() == 'l' and agents_active and not viewing_full_log:
+                        viewing_full_log = True
+                        log_scroll_offset = 0
+
+                    # Handle ESC to exit log view
+                    elif key == 'ESC':
+                        viewing_full_log = False
+                        log_scroll_offset = 0
+
+                    # Handle scrolling in full log view
+                    elif viewing_full_log:
+                        if key == 'UP':
+                            log_scroll_offset = max(0, log_scroll_offset - 3)
+                        elif key == 'DOWN':
+                            log_scroll_offset += 3
+
+                    # Handle pause
                     if key.lower() == 'p':
                         paused = not paused
 
@@ -220,14 +285,15 @@ def run_simulation():
                 )
                 layout["header"].update(Panel(header_text, style="blue"))
 
-                # --- Run simulation step if not paused ---
-                if not paused:
+                # --- Run simulation step if not paused and agents not active ---
+                if not paused and not agents_active:
                     # --- Anomaly Injection ---
                     # Guaranteed first anomaly
                     if not guaranteed_anomaly_injected and tick_counter == guaranteed_anomaly_tick:
                         problem = random.choice(['POWER_OUTAGE', 'FIBER_CUT', 'SIGNAL_INTERFERENCE'])
                         engine.inject_anomaly(problem)
                         agent_logs.append(Text(f"💥 Anomaly Injected: {problem}", style="bold red"))
+                        full_log_history.append(f"💥 Anomaly Injected: {problem}")
                         guaranteed_anomaly_injected = True
                         show_step_through = True
                     # Probabilistic subsequent anomalies
@@ -236,6 +302,7 @@ def run_simulation():
                             problem = random.choice(['POWER_OUTAGE', 'FIBER_CUT', 'SIGNAL_INTERFERENCE'])
                             engine.inject_anomaly(problem)
                             agent_logs.append(Text(f"💥 Anomaly Injected: {problem}", style="bold red"))
+                            full_log_history.append(f"💥 Anomaly Injected: {problem}")
                             show_step_through = True
 
                     # Simulation and Agent Processing
@@ -259,15 +326,21 @@ def run_simulation():
                             if "Diagnostic" not in agent_history:
                                 agent_history.append("Diagnostic")
                                 active_agent = "Diagnostic"
+                                agents_active = True  # Pause simulation when diagnostic starts
+                                loading_llm = True
+                                paused = True
                             if supervisor.remediation_plan and "Remediation" not in agent_history:
                                 agent_history.append("Remediation")
                                 active_agent = "Remediation"
+                                loading_llm = False
                             if supervisor.human_approval_required:
                                 agent_history.append("Approval")
                                 active_agent = "Approval"
+                                loading_llm = False
                             elif "Governance" not in agent_history:
                                 agent_history.append("Governance")
                                 active_agent = "Governance"
+                                loading_llm = True
 
                     # Reset incident when complete
                     if supervisor.human_approval_required:
@@ -275,6 +348,7 @@ def run_simulation():
 
                     if log_message:
                         agent_logs.append(Text(log_message))
+                        full_log_history.append(log_message)
 
                 # --- UI Updates ---
                 status_panel = Panel(create_status_table(telemetry), title="[bold green]Live Tower Status[/bold green]")
@@ -286,68 +360,106 @@ def run_simulation():
                 # Pipeline visualization
                 pipeline_panel = create_pipeline_visualization(active_agent, agent_history)
 
+                # Always update help panel with current controls
+                help_text = "[bold cyan]SPACE[/] next step  |  [bold cyan]↑↓[/] scroll logs  |  [bold cyan]l[/] full log  |  [bold cyan]y/n/s[/] decide  |  [bold cyan]p[/] pause  |  [bold cyan]ESC[/] exit log"
+                layout["help"].update(Panel(help_text, style="dim blue"))
+
                 layout["left_panel"].update(status_panel)
                 layout["right_panel"].update(log_panel)
                 layout["pipeline"].update(pipeline_panel)
 
-                # --- Handle Step-Through and Human Approval ---
-                if supervisor.human_approval_required and show_step_through:
-                    # Stop live display and show step-through
-                    live.stop()
+                # --- Handle Step-Through Mode ---
+                if supervisor.human_approval_required and show_step_through and not step_through_mode:
+                    # Enter step-through mode and generate data
+                    step_through_mode = True
+                    current_step_index = 0
+                    step_through_data = generate_step_through_data(telemetry)
+                    awaiting_step_advance = True
 
-                    show_agent_step_through(telemetry)
+                # --- Handle Space key for advancing through steps ---
+                if step_through_mode and awaiting_step_advance and not viewing_full_log:
+                    if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+                        key = sys.stdin.read(1)
+                        if key == ' ':  # Space key
+                            if current_step_index < len(step_through_data) - 1:
+                                # Advance to next step
+                                current_step_index += 1
+                            else:
+                                # All steps done, show approval in footer
+                                awaiting_step_advance = False
+                                layout["approval"].visible = True
+                        elif key.lower() == 'p':
+                            paused = not paused
 
+                # --- Handle Approval Prompt in Approval Panel ---
+                if step_through_mode and not awaiting_step_advance and supervisor.human_approval_required:
                     plan = supervisor.remediation_plan
                     incident = supervisor.current_incident
-
-                    # --- Show Approval Panel and Get Input ---
                     approval_text = format_approval_prompt(incident, plan)
-                    console.print(Panel(approval_text, title="[bold red]Human Approval Required[/bold red]", expand=False))
 
-                    # Restore terminal settings for the prompt and get input
-                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                    approval_panel_text = Text.from_markup(
+                        "[bold]Options:[/]\n"
+                        "  [bold green](y)[/] Approve plan\n"
+                        "  [bold red](n)[/] Reject - silence alert\n"
+                        "  [bold yellow](s)[/] Suggest alternative\n\n"
+                        "[bold]Your decision: [/]"
+                    )
+                    approval_full = Text("\n").join([approval_text, approval_panel_text])
+                    layout["approval"].update(Panel(approval_full, title="[bold red]Human Approval Required[/bold red]"))
 
-                    # Get user input with options
-                    console.print("\n[bold]Options:[/]")
-                    console.print("  [bold green](y)[/] Approve plan")
-                    console.print("  [bold red](n)[/] Reject - silence alert")
-                    console.print("  [bold yellow](s)[/] Suggest alternative approach")
-                    response = console.input("\n[bold]Your decision (y/n/s): [/]").lower().strip()
+                    # Handle approval input
+                    if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+                        key = sys.stdin.read(1)
+                        response = key.lower()
 
-                    tty.setcbreak(sys.stdin.fileno()) # Set terminal back to cbreak mode
+                        if response == 'y':
+                            # APPROVAL
+                            agent_logs.append(Text(f"✅ Remediation plan APPROVED - Actions queued for execution", style="bold green"))
+                            full_log_history.append("✅ Remediation plan APPROVED - Actions queued for execution")
+                            engine.anomaly = None
+                            step_through_mode = False
+                            current_step_index = 0
+                            step_through_data = []
+                            layout["approval"].visible = False
+                            supervisor.human_approval_required = False
+                            supervisor.remediation_plan = None
+                            supervisor.current_incident = None
+                            active_agent = None
+                            agent_history = []
+                            current_incident = None
+                            incident_active = False
+                            show_step_through = False
+                            agents_active = False
+                            log_scroll_offset = 0
+                            viewing_full_log = False
 
-                    # --- Process Decision ---
-                    if response == 'y':
-                        # APPROVAL
-                        agent_logs.append(Text(f"✅ Remediation plan APPROVED - Actions queued for execution", style="bold green"))
-                        # Clear the anomaly now that it has been "handled"
-                        engine.anomaly = None
-                    elif response == 'n':
-                        # REJECTION
-                        agent_logs.append(Text(f"✅ Alert SILENCED", style="bold yellow"))
-                        # Anomaly is NOT cleared, allowing it to be re-detected.
-                    elif response == 's':
-                        # SUGGESTION
-                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                        suggestion = console.input("[bold]Enter your suggested approach: [/]")
-                        tty.setcbreak(sys.stdin.fileno())
-                        agent_logs.append(Text(f"✅ User suggested: '{suggestion}' - has been completed", style="bold cyan"))
-                        engine.anomaly = None
+                        elif response == 'n':
+                            # REJECTION
+                            agent_logs.append(Text(f"✅ Alert SILENCED", style="bold yellow"))
+                            full_log_history.append("✅ Alert SILENCED")
+                            step_through_mode = False
+                            current_step_index = 0
+                            step_through_data = []
+                            layout["approval"].visible = False
+                            supervisor.human_approval_required = False
+                            supervisor.remediation_plan = None
+                            supervisor.current_incident = None
+                            active_agent = None
+                            agent_history = []
+                            current_incident = None
+                            incident_active = False
+                            show_step_through = False
+                            agents_active = False
+                            log_scroll_offset = 0
+                            viewing_full_log = False
 
-                    # Reset state
-                    supervisor.human_approval_required = False
-                    supervisor.remediation_plan = None
-                    supervisor.current_incident = None
-                    active_agent = None
-                    agent_history = []
-                    current_incident = None
-                    incident_active = False
-                    show_step_through = False
-
-                    # Restart the live display
-                    console.clear() # Clear the prompt from the screen
-                    live.start()
-                    live.refresh()
+                        elif response == 's':
+                            # SUGGESTION - show input in approval panel
+                            suggestion_prompt = Panel(
+                                "[bold]Enter your suggested approach:\n(Use Ctrl+C to cancel)[/]",
+                                title="[bold yellow]Suggest Alternative[/bold yellow]"
+                            )
+                            layout["approval"].update(suggestion_prompt)
 
                 time.sleep(SIMULATION_SPEED if not paused else 0.1)
 
@@ -420,7 +532,41 @@ def create_pipeline_visualization(active_agent: Optional[str], completed_agents:
     return Panel(pipeline_text, title="[bold cyan]Agent Pipeline[/bold cyan]", style="cyan")
 
 def format_agent_logs(logger, supervisor_obj) -> Text:
-    """Format agent logs in natural language."""
+    """Format agent logs in natural language or detailed step-through with scrolling support."""
+    global llm_load_spinner
+
+    # If viewing full log history
+    if viewing_full_log:
+        log_lines = list(full_log_history)
+        if not log_lines:
+            return Text("No log history available", style="cyan")
+
+        # Apply scroll offset
+        visible_lines = log_lines[log_scroll_offset:]
+        display_text = "\n".join(visible_lines)
+        display_text += f"\n\n[dim]Scroll position: {log_scroll_offset}[/dim]"
+        return Text.from_markup(display_text)
+
+    # If in step-through mode, show current step with navigation hint
+    if step_through_mode and step_through_data:
+        current_step = step_through_data[current_step_index]
+        step_text = current_step["text"]
+
+        # Add loading indicator if waiting for LLM
+        if loading_llm:
+            spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+            spinner_char = spinners[llm_load_spinner % len(spinners)]
+            step_text += f"\n\n[bold yellow]{spinner_char} Processing with LLM...[/bold yellow]"
+
+        # Add navigation hint
+        if current_step_index < len(step_through_data) - 1:
+            step_text += "\n\n[bold green]→ Press SPACE to advance to next step[/bold green]"
+        else:
+            step_text += "\n\n[bold green]→ Press SPACE to show approval options[/bold green]"
+
+        return Text.from_markup(step_text)
+
+    # Default mode: show regular agent logs
     logs = []
 
     # Get agent logs from logger
@@ -431,11 +577,17 @@ def format_agent_logs(logger, supervisor_obj) -> Text:
 
         if agent == 'DiagnosticAgent':
             tools_str = f" using {', '.join(tools)}" if tools else ""
-            logs.append(f"📊 Diagnostic team analyzing incident{tools_str}... ({tokens} tokens)")
+            log_msg = f"📊 Diagnostic team analyzing incident{tools_str}... ({tokens} tokens)"
+            logs.append(log_msg)
+            full_log_history.append(log_msg)
         elif agent == 'RemediationAgent':
-            logs.append(f"🛠️ Remediation team creating action plan... ({tokens} tokens)")
+            log_msg = f"🛠️ Remediation team creating action plan... ({tokens} tokens)"
+            logs.append(log_msg)
+            full_log_history.append(log_msg)
         elif agent == 'GovernanceAgent':
-            logs.append(f"⚖️ Governance team reviewing for policy compliance... ({tokens} tokens)")
+            log_msg = f"⚖️ Governance team reviewing for policy compliance... ({tokens} tokens)"
+            logs.append(log_msg)
+            full_log_history.append(log_msg)
 
     return Text("\n".join(logs) if logs else "Initializing agents...", style="cyan")
 
