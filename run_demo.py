@@ -39,16 +39,22 @@ supervisor = SupervisorAgent(logger=agent_logger)
 agent_logs = deque(maxlen=LOG_BUFFER_SIZE)
 paused = False
 
+# Agent pipeline state tracking
+active_agent = None  # Which agent is currently processing
+agent_history = []  # Track which agents have completed
+current_incident = None
+
 def make_layout() -> Layout:
     """Defines the terminal UI layout."""
     layout = Layout(name="root")
     layout.split(
         Layout(name="header", size=3),
         Layout(ratio=1, name="main"),
-        Layout(size=12, name="footer"), # Increased footer size
+        Layout(name="pipeline", size=6),  # Agent pipeline visualization
+        Layout(size=12, name="footer"),  # Approval prompt
     )
     layout["main"].split_row(Layout(name="left_panel"), Layout(name="right_panel"))
-    layout["footer"].visible = False # Hidden by default
+    layout["footer"].visible = False
     return layout
 
 def create_status_table(telemetry_data: dict) -> Table:
@@ -81,7 +87,7 @@ def create_status_table(telemetry_data: dict) -> Table:
 
 def run_simulation():
     """Main function to run the simulation and render the UI."""
-    global paused
+    global paused, active_agent, agent_history, current_incident
     layout = make_layout()
     telemetry = {} # Initialize telemetry
 
@@ -89,6 +95,7 @@ def run_simulation():
     tick_counter = 0
     guaranteed_anomaly_tick = random.randint(5, 15)
     guaranteed_anomaly_injected = False
+    incident_active = False
     
     old_settings = termios.tcgetattr(sys.stdin)
     try:
@@ -132,23 +139,60 @@ def run_simulation():
 
                     # Simulation and Agent Processing
                     telemetry = engine.tick()
+
+                    # Track incident processing
+                    if supervisor.current_incident and not incident_active:
+                        incident_active = True
+                        agent_history = []
+                        active_agent = "Monitoring"
+                        current_incident = supervisor.current_incident
+
+                    # Process telemetry through agents
                     log_message = supervisor.process_telemetry(telemetry)
+
+                    # Update agent tracking
+                    if supervisor.current_incident:
+                        if not agent_history:
+                            agent_history.append("Monitoring")
+                        if len(agent_logger.get_incident_logs()) > 0:
+                            if "Diagnostic" not in agent_history:
+                                agent_history.append("Diagnostic")
+                                active_agent = "Diagnostic"
+                            if supervisor.remediation_plan and "Remediation" not in agent_history:
+                                agent_history.append("Remediation")
+                                active_agent = "Remediation"
+                            if supervisor.human_approval_required:
+                                agent_history.append("Approval")
+                                active_agent = "Approval"
+                            elif "Governance" not in agent_history:
+                                agent_history.append("Governance")
+                                active_agent = "Governance"
+
+                    # Reset incident when complete
+                    if supervisor.human_approval_required:
+                        incident_active = False
+
                     if log_message:
                         agent_logs.append(Text(log_message))
 
                 # --- UI Updates ---
                 status_panel = Panel(create_status_table(telemetry), title="[bold green]Live Tower Status[/bold green]")
 
-                # Get agent logs from logger
-                agent_log_lines = agent_logger.format_logs_for_ui(max_lines=LOG_BUFFER_SIZE)
-                if agent_log_lines:
-                    log_text = Text("\n".join(agent_log_lines), style="cyan")
+                # Natural language logs
+                nl_logs = format_natural_language_log(supervisor, current_incident, supervisor.remediation_plan)
+                if agent_logger.get_incident_logs():
+                    log_text = Text(nl_logs, style="cyan")
                 else:
-                    log_text = Text("Waiting for incidents...", style="dim")
+                    log_text = Text("Waiting for network anomalies...", style="dim")
 
-                log_panel = Panel(log_text, title="[bold blue]LLM Agent Activity[/bold blue]")
+                log_panel = Panel(log_text, title="[bold blue]Agent Status[/bold blue]")
+
+                # Pipeline visualization
+                pipeline_panel = create_pipeline_visualization(active_agent, agent_history)
+
                 layout["left_panel"].update(status_panel)
                 layout["right_panel"].update(log_panel)
+                layout["pipeline"].update(pipeline_panel)
 
                 # --- Handle Human Approval ---
                 if supervisor.human_approval_required and not paused:
@@ -180,7 +224,11 @@ def run_simulation():
                     supervisor.human_approval_required = False
                     supervisor.remediation_plan = None
                     supervisor.current_incident = None
-                    
+                    active_agent = None
+                    agent_history = []
+                    current_incident = None
+                    incident_active = False
+
                     # Restart the live display
                     console.clear() # Clear the prompt from the screen
                     live.start()
@@ -216,6 +264,65 @@ def format_approval_prompt(incident: Incident, plan: RemediationPlan) -> Text:
         )
     
     return Text.from_markup(f"{incident_details}\n{plan_details}")
+
+def create_pipeline_visualization(active_agent: Optional[str], completed_agents: list) -> Panel:
+    """Creates a visual representation of the agent pipeline."""
+    agents = [
+        ("Monitoring", "🔍"),
+        ("Diagnostic", "🔬"),
+        ("Governance", "⚖️"),
+        ("Remediation", "🔧"),
+        ("Approval", "✅"),
+    ]
+
+    # Build pipeline visualization with arrows
+    pipeline_parts = []
+    for i, (agent_name, icon) in enumerate(agents):
+        # Style based on state
+        if agent_name == active_agent:
+            style = "bold green on black"
+            text = f"[{style}] {icon} {agent_name} (ACTIVE)[/]"
+        elif agent_name in completed_agents:
+            style = "green"
+            text = f"[{style}]✓ {agent_name}[/]"
+        else:
+            style = "dim white"
+            text = f"[{style}]{icon} {agent_name}[/]"
+
+        pipeline_parts.append(text)
+
+        # Add arrow between agents
+        if i < len(agents) - 1:
+            # Highlight arrow if data is flowing
+            if agent_name in completed_agents and agents[i+1][0] != active_agent:
+                pipeline_parts.append("[green]→[/]")
+            elif agent_name == active_agent:
+                pipeline_parts.append("[bold green]→[/]")
+            else:
+                pipeline_parts.append("[dim]→[/]")
+
+    pipeline_text = Text(" ").join([Text.from_markup(part) for part in pipeline_parts])
+    return Panel(pipeline_text, title="[bold cyan]Agent Pipeline[/bold cyan]", style="cyan")
+
+def format_natural_language_log(supervisor_obj, incident_obj, plan_obj) -> str:
+    """Format logs in natural language."""
+    logs = []
+
+    # Get agent logs from logger
+    for log in agent_logger.get_incident_logs()[-5:]:  # Last 5 interactions
+        agent = log['agent']
+        tokens = log['tokens']
+        tools = log['tools_called']
+
+        if agent == 'DiagnosticAgent':
+            tools_str = f" using {', '.join(tools)}" if tools else ""
+            logs.append(f"📊 Diagnostic team analyzing incident{tools_str}... ({tokens} tokens)")
+        elif agent == 'RemediationAgent':
+            logs.append(f"🛠️ Remediation team creating action plan... ({tokens} tokens)")
+        elif agent == 'GovernanceAgent':
+            logs.append(f"⚖️ Governance team reviewing for policy compliance... ({tokens} tokens)")
+
+    return "\n".join(logs) if logs else "Initializing agents..."
 
 if __name__ == "__main__":
     console.print("Starting simulation... Press 'p' to pause/resume. Press Ctrl+C to exit.", style="bold green")
