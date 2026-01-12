@@ -11,7 +11,7 @@ from src.agents.tools import TOOLS_SCHEMA, execute_tool
 class GovernanceAgent:
     """Meticulous auditor that ensures compliance with safety and policy requirements."""
 
-    def __init__(self, llm_client: Optional[LLMClient] = None, logger: Optional[AgentLogger] = None, max_tokens: int = 250):
+    def __init__(self, llm_client: Optional[LLMClient] = None, logger: Optional[AgentLogger] = None, max_tokens: int = 1000):
         self.llm_client = llm_client or LLMClient(max_tokens_per_call=max_tokens)
         self.logger = logger
         self.max_tokens = max_tokens
@@ -27,23 +27,28 @@ class GovernanceAgent:
             )
 
         # Build system prompt with persona
-        system_prompt = """You are a meticulous compliance auditor. Review incidents and remediation plans against company policies.
-Check: diagnosis confidence, risk levels, customer impact, remediation risk.
-Return JSON with: decision (APPROVE/REJECT_LOW_CONFIDENCE/REJECT_BAD_PLAN/REJECT_POLICY_VIOLATION), reason_code, reason (brief)."""
+        system_prompt = """You are a meticulous compliance auditor. Your ONLY job is to validate policies.
+CRITICAL: Respond with ONLY a JSON object (no text before or after).
+Check policies and return JSON with exactly these fields:
+- decision: APPROVE, REJECT_LOW_CONFIDENCE, REJECT_BAD_PLAN, or REJECT_POLICY_VIOLATION
+- reason_code: Code for decision
+- reason: Brief explanation
+- policies_checked: Array of policy names checked
+NO PROSE. ONLY JSON."""
 
         # Build user message
         user_message = f"""Review this incident and remediation plan for policy compliance:
 
-Incident:
-  Type: {incident.incident_type}
-  Root Cause: {incident.root_cause_hypothesis}
-  Diagnosis Confidence: {incident.diagnosis_confidence}
+Incident: {incident.incident_type}
+  Confidence: {incident.diagnosis_confidence}
   Severity: {incident.severity}
 
-{f"Remediation Plan: {json.dumps(plan.to_dict()[:100])}..." if plan else "No remediation plan provided"}
+{f"Plan: {str(plan.to_dict())[:200]}" if plan else "No plan"}
 
-Call policy tools if needed. Then respond with JSON:
-{{"decision": "APPROVE|REJECT_LOW_CONFIDENCE|REJECT_BAD_PLAN|REJECT_POLICY_VIOLATION", "reason_code": "...", "reason": "...", "policies_checked": ["list"]}}"""
+Use policy tools if needed, then respond with ONLY this JSON format (no prose):
+{{"decision": "APPROVE|REJECT_LOW_CONFIDENCE|REJECT_BAD_PLAN|REJECT_POLICY_VIOLATION", "reason_code": "code", "reason": "reason", "policies_checked": ["policy1"]}}
+
+ONLY JSON. NO OTHER TEXT."""
 
         # Call Claude
         response = self.llm_client.call(
@@ -65,40 +70,62 @@ Call policy tools if needed. Then respond with JSON:
                 policies_checked=['error_handling']
             )
 
-        # Process tool calls if any
+        # Process tool calls if any - handle multiple rounds
         tool_calls_made = []
-        messages = [{"role": "user", "content": user_message}]
+        total_tokens = response.get('total_tokens', 0)
 
         if response.get('tool_calls'):
-            tool_calls = response.get('tool_calls', [])
-            tool_calls_made = [tc['name'] for tc in tool_calls]
+            # Build initial message with first batch of tool calls
+            messages = [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": response.get('content', ''), "tool_calls": [
+                    {"id": tc['id'], "type": "function", "function": {"name": tc['name'], "arguments": json.dumps(tc['input'])}}
+                    for tc in response.get('tool_calls', [])
+                ]}
+            ]
 
-            tool_results = []
-            for tool_call in tool_calls:
-                tool_result = execute_tool(tool_call['name'], tool_call['input'])
-                tool_results.append({
-                    'type': 'tool_result',
-                    'tool_use_id': tool_call['id'],
-                    'content': json.dumps(tool_result)
-                })
+            # Multi-round tool handling
+            current_response = response
+            max_tool_rounds = 3
+            round_count = 0
 
-            messages.append({'role': 'assistant', 'content': [
-                {'type': 'tool_use', 'id': tc['id'], 'name': tc['name'], 'input': tc['input']}
-                for tc in tool_calls
-            ]})
-            messages.append({'role': 'user', 'content': tool_results})
+            while current_response.get('tool_calls') and round_count < max_tool_rounds:
+                round_count += 1
+                tool_calls = current_response.get('tool_calls', [])
+                tool_calls_made.extend([tc['name'] for tc in tool_calls])
 
-            response2 = self.llm_client.call_with_tool_results(
-                system_prompt=system_prompt,
-                messages=messages,
-                tools=TOOLS_SCHEMA
-            )
+                # Execute all tool calls in this round
+                for tool_call in tool_calls:
+                    tool_result = execute_tool(tool_call['name'], tool_call['input'])
+                    messages.append({
+                        'role': 'tool',
+                        'tool_call_id': tool_call['id'],
+                        'name': tool_call['name'],
+                        'content': json.dumps(tool_result)
+                    })
 
-            final_response = response2.get('content', '')
-            total_tokens = response.get('total_tokens', 0) + response2.get('total_tokens', 0)
+                # Get next response
+                current_response = self.llm_client.call_with_tool_results(
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    tools=TOOLS_SCHEMA
+                )
+                total_tokens += current_response.get('total_tokens', 0)
+
+                # If more tools needed, add to messages
+                if current_response.get('tool_calls'):
+                    messages.append({
+                        "role": "assistant",
+                        "content": current_response.get('content', ''),
+                        "tool_calls": [
+                            {"id": tc['id'], "type": "function", "function": {"name": tc['name'], "arguments": json.dumps(tc['input'])}}
+                            for tc in current_response.get('tool_calls', [])
+                        ]
+                    })
+
+            final_response = current_response.get('content', '')
         else:
             final_response = response.get('content', '')
-            total_tokens = response.get('total_tokens', 0)
 
         # Log interaction
         if self.logger:

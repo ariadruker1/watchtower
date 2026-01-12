@@ -15,21 +15,22 @@ from typing import Optional
 class SupervisorAgent:
     """Operations chief orchestrating multi-agent incident response with token budgeting."""
 
-    def __init__(self, logger: Optional[AgentLogger] = None, max_budget: int = 1500):
+    def __init__(self, logger: Optional[AgentLogger] = None, max_budget: int = 5000):
         self.logger = logger or AgentLogger()
 
-        # Token budget
+        # Token budget - redistributed for better reasoning
         self.max_budget = max_budget
         self.current_budget = max_budget
 
-        # Shared LLM client for all agents
-        self.llm_client = LLMClient()
+        # Shared LLM client for all agents (set high to allow agents to make full requests)
+        self.llm_client = LLMClient(max_tokens_per_call=2000)
 
         # Initialize all subordinate agents with shared LLM client and logger
+        # Token distribution: Diagnostic=2000 (multi-round tool calling) + Remediation=1500 (planning) + Governance=1000 (validation) + buffer=500
         self.monitoring_agent = MonitoringAgent()
-        self.diagnostic_agent = DiagnosticAgent(self.llm_client, self.logger, max_tokens=400)
-        self.remediation_agent = RemediationAgent(self.llm_client, self.logger, max_tokens=400)
-        self.governance_agent = GovernanceAgent(self.llm_client, self.logger, max_tokens=250)
+        self.diagnostic_agent = DiagnosticAgent(self.llm_client, self.logger, max_tokens=2000)
+        self.remediation_agent = RemediationAgent(self.llm_client, self.logger, max_tokens=1500)
+        self.governance_agent = GovernanceAgent(self.llm_client, self.logger, max_tokens=1000)
 
         # State attributes
         self.remediation_plan: Optional[RemediationPlan] = None

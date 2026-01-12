@@ -128,17 +128,20 @@ class LLMClient:
         """
         Continue conversation after tool execution.
         messages format: [{'role': 'user|assistant', 'content': ...}, ...]
+        System prompt is prepended to messages list.
         """
-        # Prepend system message if not present
-        if not messages or messages[0].get('role') != 'system':
-            messages = [{"role": "system", "content": system_prompt}] + messages
-
+        # OpenAI requires system prompt as first message in array
         openai_tools = self._convert_tools_schema(tools) if tools else None
+
+        # Prepend system message to messages
+        messages_with_system = [
+            {"role": "system", "content": system_prompt}
+        ] + messages
 
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=messages,
+                messages=messages_with_system,
                 max_tokens=self.max_tokens_per_call,
                 tools=openai_tools,
                 tool_choice="auto" if openai_tools else None,

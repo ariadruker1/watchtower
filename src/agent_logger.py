@@ -25,7 +25,7 @@ class AgentLogger:
             'timestamp': datetime.now().isoformat(),
             'agent': agent_name,
             'prompt': prompt[:200] + '...' if len(prompt) > 200 else prompt,  # Truncate for display
-            'response': response[:300] + '...' if len(response) > 300 else response,
+            'response': response[:1000] + '...' if len(response) > 1000 else response,
             'tools_called': tools_called,
             'tokens': tokens_used,
             'success': success
