@@ -583,7 +583,7 @@ def format_agent_logs(logger, supervisor_obj) -> Text:
     logs = []
 
     # Get agent logs from logger
-    for log in logger.get_incident_logs()[-5:]:  # Last 5 interactions
+    for log in logger.get_incident_logs()[-10:]:  # Last 5 interactions
         agent = log['agent']
         tokens = log['tokens']
         tools = log['tools_called']

@@ -14,7 +14,7 @@ Rule-based incident management orchestration.
 
 ```
 Telemetry → Monitoring (Alert) → Diagnostic (Incident)
-  → Governance (confidence check) → Remediation (Plan)
+  → Remediation (Plan) → Governance (confidence check) 
   → Human Approval (Y/N) → Complete
 ```
 
