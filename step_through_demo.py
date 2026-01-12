@@ -96,7 +96,7 @@ def make_layout() -> Layout:
         Layout(name="main", ratio=1),
         Layout(name="pipeline", size=5),
         Layout(name="approval", size=10),
-        Layout(name="help", size=2),
+        Layout(name="help", size=3),  # Increased size for help panel
     )
     layout["main"].split_row(
         Layout(name="left_panel", ratio=1),
@@ -370,8 +370,12 @@ def run_simulation():
                 pipeline_panel = create_pipeline_visualization(active_agent, agent_history)
 
                 # Always update help panel with current controls
-                help_text = "[bold cyan]SPACE[/] next step  |  [bold cyan]↑↓[/] scroll logs  |  [bold cyan]l[/] full log  |  [bold cyan]y/n/s[/] decide  |  [bold cyan]p[/] pause  |  [bold cyan]ESC[/] exit log"
-                layout["help"].update(Panel(help_text, style="dim blue"))
+                help_lines = [
+                    "[bold cyan]SPACE[/] advance step  |  [bold cyan]↑↓[/] scroll logs  |  [bold cyan]l[/] open full log history",
+                    "[bold cyan]ESC[/] close log history  |  [bold cyan]y[/] approve  |  [bold cyan]n[/] reject  |  [bold cyan]p[/] pause",
+                ]
+                help_text = "\n".join(help_lines)
+                layout["help"].update(Panel(help_text, title="[bold yellow]Commands[/bold yellow]", style="dim white"))
 
                 layout["left_panel"].update(status_panel)
                 layout["right_panel"].update(log_panel)
@@ -384,6 +388,7 @@ def run_simulation():
                     current_step_index = 0
                     step_through_data = generate_step_through_data(telemetry)
                     awaiting_step_advance = True
+                    loading_llm = False  # We're now showing the completed processing
 
                 # --- Handle Step-Through keyboard input (if not already handled above) ---
                 # This is handled in the main keyboard input section above
