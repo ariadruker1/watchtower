@@ -1,414 +1,446 @@
 #!/usr/bin/env python3
-"""Interactive step-through demo showing agent processing at each stage."""
+"""Step-through demo showing detailed agent processing when anomalies occur."""
 
+import time
+import random
+import sys
+import select
+import tty
+import termios
+import json
+from collections import deque
 from dotenv import load_dotenv
+
+# Load environment variables from .env file
 load_dotenv()
 
 from rich.console import Console
+from rich.layout import Layout
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.layout import Layout
-import time
+from rich.prompt import Confirm
+from typing import Optional
 
 from src.simulation.engine import SimulationEngine
 from src.agents.supervisor_agent import SupervisorAgent
-from src.agents.monitoring_agent import MonitoringAgent
 from src.agent_logger import AgentLogger
-from src.data_models import Alert
+from src.data_models import Incident, RemediationPlan
 
+# --- Constants ---
+SIMULATION_SPEED = 1.0  # seconds per tick
+ANOMALY_PROBABILITY = 0.05 # 5% chance of a new anomaly per tick
+RANDOM_SEED = 42
+LOG_BUFFER_SIZE = 15
+
+# --- Initialization ---
+random.seed(RANDOM_SEED)
 console = Console()
+engine = SimulationEngine(topology_file='config/topology.json')
+agent_logger = AgentLogger()
+supervisor = SupervisorAgent(logger=agent_logger)
+agent_logs = deque(maxlen=LOG_BUFFER_SIZE)
+paused = False
 
-class StepThroughDemo:
-    def __init__(self):
-        self.logger = AgentLogger()
-        self.supervisor = SupervisorAgent(logger=self.logger)
-        self.monitoring_agent = MonitoringAgent()
-        self.engine = SimulationEngine(topology_file='config/topology.json')
+# Agent pipeline state tracking
+active_agent = None  # Which agent is currently processing
+agent_history = []  # Track which agents have completed
+current_incident = None
 
-        # State tracking
-        self.current_stage = 0
-        self.stages = []
-        self.telemetry = None
-        self.alerts = None
-        self.incident = None
-        self.remediation_plan = None
-        self.governance_decision = None
+def make_layout() -> Layout:
+    """Defines the terminal UI layout."""
+    layout = Layout(name="root")
+    layout.split(
+        Layout(name="header", size=3),
+        Layout(ratio=1, name="main"),
+        Layout(name="pipeline", size=6),  # Agent pipeline visualization
+        Layout(size=12, name="footer"),  # Approval prompt
+    )
+    layout["main"].split_row(Layout(name="left_panel"), Layout(name="right_panel"))
+    layout["footer"].visible = False
+    return layout
 
-    def detect_anomaly(self, anomaly_type: str):
-        """Inject anomaly and detect with monitoring agent."""
-        console.print("\n[bold cyan]═══════════════════════════════════════════════════════════[/]")
-        console.print("[bold cyan]DETECTING ANOMALY[/]")
-        console.print("[bold cyan]═══════════════════════════════════════════════════════════[/]\n")
+def create_status_table(telemetry_data: dict) -> Table:
+    """Creates a Rich Table from telemetry data."""
+    table = Table(title="Cell Tower Status", expand=True)
+    table.add_column("ID", justify="center", style="cyan")
+    table.add_column("Name", style="magenta")
+    table.add_column("Status", justify="center")
+    table.add_column("Power", justify="right", style="green")
+    table.add_column("Signal", justify="right", style="blue")
+    table.add_column("Data", justify="right", style="yellow")
 
-        # Inject anomaly
-        self.engine.inject_anomaly(anomaly_type)
-        self.telemetry = self.engine.tick()
+    for tower_id, metrics in telemetry_data.items():
+        status = metrics['status']
+        style = "green"
+        if status == 'ALARM':
+            style = "yellow"
+        elif status == 'DOWN':
+            style = "bold red"
 
-        # Show affected towers
-        console.print("[bold]Telemetry Status:[/]")
-        affected_towers = []
-        for tower_id, metrics in self.telemetry.items():
-            if metrics['status'] != 'OK':
-                affected_towers.append(tower_id)
-                status_color = "red" if metrics['status'] == 'DOWN' else "yellow"
-                console.print(
-                    f"  [bold {status_color}]●[/] {tower_id}: {metrics['status']} "
-                    f"(Power: {metrics['power_level']:.1f}%, Signal: {metrics['signal_strength']:.1f} dBm)"
+        table.add_row(
+            tower_id,
+            metrics['tower_name'],
+            Text(status, style=style),
+            f"{metrics['power_level']:.1f}%",
+            f"{metrics['signal_strength']:.1f} dBm",
+            f"{metrics['data_throughput']:.1f} Mbps",
+        )
+    return table
+
+def show_agent_step_through(telemetry_data: dict):
+    """Show detailed step-through of agent processing."""
+    console.print("\n[bold cyan]═══════════════════════════════════════════════════════════[/]")
+    console.print("[bold cyan]DETAILED AGENT PROCESSING STEP-THROUGH[/]")
+    console.print("[bold cyan]═══════════════════════════════════════════════════════════[/]\n")
+
+    # Get all agent logs
+    logs = agent_logger.get_incident_logs()
+
+    for i, log in enumerate(logs, 1):
+        agent = log['agent']
+        tokens = log['tokens']
+        tools = log['tools_called']
+        response = log['response']
+
+        console.print(f"[bold green]► Step {i}: {agent}[/]")
+        console.print("[bold]─────────────────────────────────────────[/]")
+
+        # Show what agent is doing
+        if agent == 'DiagnosticAgent':
+            console.print("[cyan]Action:[/] Diagnosing root cause from alerts")
+            if tools:
+                console.print(f"[cyan]Tools called:[/] {', '.join(tools)}")
+            console.print(f"[cyan]Tokens used:[/] {tokens}\n")
+
+            # Extract and show the incident object
+            incident = supervisor.current_incident
+            if incident:
+                console.print("[bold]Incident Details:[/]")
+                incident_data = {
+                    "incident_type": incident.incident_type,
+                    "severity": incident.severity,
+                    "diagnosis_confidence": incident.diagnosis_confidence,
+                    "affected_cell_ids": incident.affected_cell_ids,
+                    "root_cause_hypothesis": incident.root_cause_hypothesis,
+                    "evidence": incident.evidence,
+                }
+                console.print("[yellow]" + json.dumps(incident_data, indent=2) + "[/]\n")
+
+            console.print("[bold green]✓ Diagnostic complete[/]")
+            console.print("[cyan]Output:[/] Incident object → Remediation Agent\n")
+
+        elif agent == 'RemediationAgent':
+            console.print("[cyan]Action:[/] Creating remediation plan")
+            if tools:
+                console.print(f"[cyan]Tools called:[/] {', '.join(tools)}")
+            console.print(f"[cyan]Tokens used:[/] {tokens}\n")
+
+            # Extract and show the plan object
+            plan = supervisor.remediation_plan
+            if plan:
+                console.print("[bold]Remediation Plan Details:[/]")
+                plan_data = {
+                    "actions": [a.description for a in plan.actions],
+                    "rollback_plan": plan.rollback_plan,
+                    "plan_confidence": plan.plan_confidence,
+                    "verification_steps": plan.verification_steps,
+                }
+                console.print("[yellow]" + json.dumps(plan_data, indent=2) + "[/]\n")
+
+            console.print("[bold green]✓ Remediation complete[/]")
+            console.print("[cyan]Output:[/] RemediationPlan object → Governance Agent\n")
+
+        elif agent == 'GovernanceAgent':
+            console.print("[cyan]Action:[/] Validating against company policies")
+            if tools:
+                console.print(f"[cyan]Tools called:[/] {', '.join(tools)}")
+            console.print(f"[cyan]Tokens used:[/] {tokens}\n")
+
+            # Extract decision info from response text
+            console.print("[bold]Governance Decision Details:[/]")
+            # Try to parse decision from response
+            if "APPROVE" in response.upper():
+                decision_str = "APPROVE"
+            elif "REJECT" in response.upper():
+                decision_str = "REJECT_POLICY_VIOLATION"
+            else:
+                decision_str = "PENDING"
+
+            decision_data = {
+                "decision": decision_str,
+                "response_summary": response[:200] + "..." if len(response) > 200 else response,
+            }
+            console.print("[yellow]" + json.dumps(decision_data, indent=2) + "[/]\n")
+
+            console.print("[bold green]✓ Governance complete[/]")
+            console.print("[cyan]Output:[/] GovernanceDecision → Human Approval\n")
+
+        # Prompt to continue
+        try:
+            console.input(f"[bold yellow]Press Enter to continue...[/]")
+        except EOFError:
+            pass
+
+def run_simulation():
+    """Main function to run the simulation and render the UI."""
+    global paused, active_agent, agent_history, current_incident
+    layout = make_layout()
+    telemetry = {} # Initialize telemetry
+
+    # --- Guaranteed Anomaly Setup ---
+    tick_counter = 0
+    guaranteed_anomaly_tick = random.randint(5, 15)
+    guaranteed_anomaly_injected = False
+    incident_active = False
+    show_step_through = False
+
+    old_settings = termios.tcgetattr(sys.stdin)
+    try:
+        tty.setcbreak(sys.stdin.fileno())
+
+        with Live(layout, screen=True, redirect_stderr=False, vertical_overflow="visible") as live:
+            while True:
+                tick_counter += 1
+                # --- Handle keyboard input for pausing ---
+                if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+                    key = sys.stdin.read(1)
+                    if key.lower() == 'p':
+                        paused = not paused
+
+                # Update header with pause status and token usage
+                pause_status = "[bold red] [PAUSED][/]" if paused else ""
+                token_usage = supervisor.llm_client.get_token_usage_summary()
+                tokens_display = f"[cyan]Tokens: {token_usage['total_tokens']}/{supervisor.max_budget}[/]"
+                header_text = Text(
+                    f"Watchtower MVP - AI Self-Healing Demo {tokens_display}{pause_status}",
+                    justify="center",
+                    style="bold white"
                 )
+                layout["header"].update(Panel(header_text, style="blue"))
 
-        if affected_towers:
-            console.print(f"\n[bold green]✓ Anomaly detected in {len(affected_towers)} tower(s)[/]\n")
-        else:
-            console.print("\n[bold yellow]⚠ No anomalies detected[/]\n")
-            return False
+                # --- Run simulation step if not paused ---
+                if not paused:
+                    # --- Anomaly Injection ---
+                    # Guaranteed first anomaly
+                    if not guaranteed_anomaly_injected and tick_counter == guaranteed_anomaly_tick:
+                        problem = random.choice(['POWER_OUTAGE', 'FIBER_CUT', 'SIGNAL_INTERFERENCE'])
+                        engine.inject_anomaly(problem)
+                        agent_logs.append(Text(f"💥 Anomaly Injected: {problem}", style="bold red"))
+                        guaranteed_anomaly_injected = True
+                        show_step_through = True
+                    # Probabilistic subsequent anomalies
+                    elif guaranteed_anomaly_injected:
+                        if not engine.anomaly and random.random() < ANOMALY_PROBABILITY:
+                            problem = random.choice(['POWER_OUTAGE', 'FIBER_CUT', 'SIGNAL_INTERFERENCE'])
+                            engine.inject_anomaly(problem)
+                            agent_logs.append(Text(f"💥 Anomaly Injected: {problem}", style="bold red"))
+                            show_step_through = True
 
-        # Initialize stages
-        self.current_stage = 0
-        self.stages = [
-            {
-                'name': 'MONITORING',
-                'status': 'pending',
-                'description': 'Analyzing telemetry for alerts',
-                'log': [],
-            },
-            {
-                'name': 'DIAGNOSTIC',
-                'status': 'pending',
-                'description': 'Diagnosing root cause of alerts',
-                'log': [],
-            },
-            {
-                'name': 'REMEDIATION',
-                'status': 'pending',
-                'description': 'Creating remediation plan',
-                'log': [],
-            },
-            {
-                'name': 'GOVERNANCE',
-                'status': 'pending',
-                'description': 'Validating against company policies',
-                'log': [],
-            },
-        ]
+                    # Simulation and Agent Processing
+                    telemetry = engine.tick()
 
-        return True
+                    # Track incident processing
+                    if supervisor.current_incident and not incident_active:
+                        incident_active = True
+                        agent_history = []
+                        active_agent = "Monitoring"
+                        current_incident = supervisor.current_incident
 
-    def step_monitoring(self):
-        """Execute monitoring stage."""
-        stage = self.stages[self.current_stage]
-        stage['status'] = 'active'
+                    # Process telemetry through agents
+                    log_message = supervisor.process_telemetry(telemetry)
 
-        console.print(self._render_pipeline())
-        console.print("\n[bold green]► MONITORING AGENT[/]")
-        console.print("[bold]─────────────────────────────────────────[/]")
+                    # Update agent tracking
+                    if supervisor.current_incident:
+                        if not agent_history:
+                            agent_history.append("Monitoring")
+                        if len(agent_logger.get_incident_logs()) > 0:
+                            if "Diagnostic" not in agent_history:
+                                agent_history.append("Diagnostic")
+                                active_agent = "Diagnostic"
+                            if supervisor.remediation_plan and "Remediation" not in agent_history:
+                                agent_history.append("Remediation")
+                                active_agent = "Remediation"
+                            if supervisor.human_approval_required:
+                                agent_history.append("Approval")
+                                active_agent = "Approval"
+                            elif "Governance" not in agent_history:
+                                agent_history.append("Governance")
+                                active_agent = "Governance"
 
-        # Log what monitoring is doing
-        console.print("[cyan]Action:[/] Analyzing telemetry data for threshold violations")
-        time.sleep(0.5)
+                    # Reset incident when complete
+                    if supervisor.human_approval_required:
+                        incident_active = False
 
-        # Get alerts
-        self.alerts = self.monitoring_agent.analyze_telemetry(self.telemetry)
+                    if log_message:
+                        agent_logs.append(Text(log_message))
 
-        # Log results
-        stage['log'].append(f"Scanned telemetry data from {len(self.telemetry)} towers")
-        console.print(f"  → Scanned {len(self.telemetry)} towers")
-        time.sleep(0.3)
+                # --- UI Updates ---
+                status_panel = Panel(create_status_table(telemetry), title="[bold green]Live Tower Status[/bold green]")
 
-        stage['log'].append(f"Detected {len(self.alerts)} alerts from threshold violations")
-        console.print(f"  → Found {len(self.alerts)} alerts:")
-        for alert in self.alerts[:5]:  # Show first 5
-            console.print(f"     • {alert.tower_id}: {alert.message}")
-        if len(self.alerts) > 5:
-            console.print(f"     ... and {len(self.alerts) - 5} more")
-        time.sleep(0.5)
+                # Agent logs panel (renamed from "Agent Status")
+                agent_logs_text = format_agent_logs(agent_logger, supervisor)
+                log_panel = Panel(agent_logs_text, title="[bold blue]Agent Logs[/bold blue]")
 
-        # Prepare to pass to diagnostic
-        stage['log'].append(f"Passing {len(self.alerts)} alerts to Diagnostic Agent")
-        console.print(f"\n[bold green]✓ Monitoring complete[/]")
-        console.print(f"[cyan]Output:[/] {len(self.alerts)} alerts → Diagnostic Agent\n")
+                # Pipeline visualization
+                pipeline_panel = create_pipeline_visualization(active_agent, agent_history)
 
-        stage['status'] = 'complete'
-        self._prompt_continue("Diagnostic Agent")
+                layout["left_panel"].update(status_panel)
+                layout["right_panel"].update(log_panel)
+                layout["pipeline"].update(pipeline_panel)
 
-    def step_diagnostic(self):
-        """Execute diagnostic stage."""
-        stage = self.stages[self.current_stage]
-        stage['status'] = 'active'
+                # --- Handle Step-Through and Human Approval ---
+                if supervisor.human_approval_required and show_step_through:
+                    # Stop live display and show step-through
+                    live.stop()
 
-        console.print(self._render_pipeline())
-        console.print("\n[bold green]► DIAGNOSTIC AGENT[/]")
-        console.print("[bold]─────────────────────────────────────────[/]")
+                    show_agent_step_through(telemetry)
 
-        console.print("[cyan]Action:[/] Diagnosing root cause from alerts")
-        time.sleep(0.5)
+                    plan = supervisor.remediation_plan
+                    incident = supervisor.current_incident
 
-        # Log tool calls
-        console.print("[cyan]Tools being called:[/]")
-        tools_to_call = [
-            ("get_weather_at_tower", "Checking weather conditions"),
-            ("get_tower_maintenance_history", "Checking maintenance history"),
-            ("check_regional_news_alerts", "Checking for regional events"),
-        ]
+                    # --- Show Approval Panel and Get Input ---
+                    approval_text = format_approval_prompt(incident, plan)
+                    console.print(Panel(approval_text, title="[bold red]Human Approval Required[/bold red]", expand=False))
 
-        for tool_name, description in tools_to_call:
-            console.print(f"  • {tool_name}: {description}")
-            time.sleep(0.3)
+                    # Restore terminal settings for the prompt and get input
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-        stage['log'].append("Called 3 diagnostic tools to gather evidence")
-        time.sleep(0.5)
+                    # Get user input with options
+                    console.print("\n[bold]Options:[/]")
+                    console.print("  [bold green](y)[/] Approve plan")
+                    console.print("  [bold red](n)[/] Reject - silence alert")
+                    console.print("  [bold yellow](s)[/] Suggest alternative approach")
+                    response = console.input("\n[bold]Your decision (y/n/s): [/]").lower().strip()
 
-        # Run diagnosis
-        console.print("\n[cyan]Analysis:[/] Processing tool results...")
-        time.sleep(0.3)
+                    tty.setcbreak(sys.stdin.fileno()) # Set terminal back to cbreak mode
 
-        self.incident = self.supervisor.diagnostic_agent.diagnose_alerts(self.alerts)
+                    # --- Process Decision ---
+                    if response == 'y':
+                        # APPROVAL
+                        agent_logs.append(Text(f"✅ Remediation plan APPROVED - Actions queued for execution", style="bold green"))
+                        # Clear the anomaly now that it has been "handled"
+                        engine.anomaly = None
+                    elif response == 'n':
+                        # REJECTION
+                        agent_logs.append(Text(f"✅ Alert SILENCED", style="bold yellow"))
+                        # Anomaly is NOT cleared, allowing it to be re-detected.
+                    elif response == 's':
+                        # SUGGESTION
+                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                        suggestion = console.input("[bold]Enter your suggested approach: [/]")
+                        tty.setcbreak(sys.stdin.fileno())
+                        agent_logs.append(Text(f"✅ User suggested: '{suggestion}' - has been completed", style="bold cyan"))
+                        engine.anomaly = None
 
-        if self.incident:
-            stage['log'].append(f"Diagnosed: {self.incident.incident_type}")
-            console.print(f"  → Incident Type: [bold cyan]{self.incident.incident_type}[/]")
-            time.sleep(0.2)
+                    # Reset state
+                    supervisor.human_approval_required = False
+                    supervisor.remediation_plan = None
+                    supervisor.current_incident = None
+                    active_agent = None
+                    agent_history = []
+                    current_incident = None
+                    incident_active = False
+                    show_step_through = False
 
-            stage['log'].append(f"Confidence: {self.incident.diagnosis_confidence:.0%}")
-            console.print(f"  → Confidence: {self.incident.diagnosis_confidence:.0%}")
-            time.sleep(0.2)
+                    # Restart the live display
+                    console.clear() # Clear the prompt from the screen
+                    live.start()
+                    live.refresh()
 
-            stage['log'].append(f"Root Cause: {self.incident.root_cause_hypothesis}")
-            console.print(f"  → Root Cause: {self.incident.root_cause_hypothesis[:60]}...")
-            time.sleep(0.2)
+                time.sleep(SIMULATION_SPEED if not paused else 0.1)
 
-            stage['log'].append(f"Severity: {self.incident.severity}")
-            console.print(f"  → Severity: [bold yellow]{self.incident.severity}[/]")
-        else:
-            stage['log'].append("Unable to diagnose - no clear root cause identified")
-            console.print("[bold red]✗ Unable to diagnose incident[/]")
+    except KeyboardInterrupt:
+        pass # Gracefully exit
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-        time.sleep(0.5)
-        stage['log'].append(f"Passing diagnosis to Remediation Agent")
-        console.print(f"\n[bold green]✓ Diagnostic complete[/]")
-        console.print(f"[cyan]Output:[/] Incident object → Remediation Agent\n")
-
-        stage['status'] = 'complete'
-        self._prompt_continue("Remediation Agent")
-
-    def step_remediation(self):
-        """Execute remediation stage."""
-        stage = self.stages[self.current_stage]
-        stage['status'] = 'active'
-
-        console.print(self._render_pipeline())
-        console.print("\n[bold green]► REMEDIATION AGENT[/]")
-        console.print("[bold]─────────────────────────────────────────[/]")
-
-        if not self.incident:
-            console.print("[bold red]✗ No incident to remediate - skipping[/]\n")
-            stage['status'] = 'skipped'
-            self._prompt_continue("Governance Agent")
-            return
-
-        console.print("[cyan]Action:[/] Creating remediation plan for incident")
-        time.sleep(0.5)
-
-        console.print("[cyan]Tools being called:[/]")
-        tools_to_call = [
-            ("get_standard_operating_procedure", "Fetching incident runbook"),
-            ("get_on_call_engineer_schedule", "Checking available teams"),
-        ]
-
-        for tool_name, description in tools_to_call:
-            console.print(f"  • {tool_name}: {description}")
-            time.sleep(0.3)
-
-        stage['log'].append("Called 2 remediation tools for guidance")
-        time.sleep(0.5)
-
-        console.print("\n[cyan]Planning:[/] Creating action steps...")
-        time.sleep(0.3)
-
-        self.remediation_plan = self.supervisor.remediation_agent.create_plan(self.incident)
-
-        if self.remediation_plan:
-            stage['log'].append(f"Created plan with {len(self.remediation_plan.actions)} action(s)")
-            console.print(f"  → Plan includes {len(self.remediation_plan.actions)} action(s):")
-            for i, action in enumerate(self.remediation_plan.actions, 1):
-                console.print(f"     {i}. {action.description[:70]}...")
-                time.sleep(0.2)
-
-            stage['log'].append(f"Plan confidence: {self.remediation_plan.plan_confidence:.0%}")
-            console.print(f"  → Plan Confidence: {self.remediation_plan.plan_confidence:.0%}")
-            time.sleep(0.2)
-
-            stage['log'].append(f"Rollback: {self.remediation_plan.rollback_plan}")
-            console.print(f"  → Rollback Procedure: {self.remediation_plan.rollback_plan[:50]}...")
-        else:
-            stage['log'].append("Unable to create remediation plan")
-            console.print("[bold red]✗ Unable to create plan[/]")
-
-        time.sleep(0.5)
-        stage['log'].append("Passing plan to Governance Agent for validation")
-        console.print(f"\n[bold green]✓ Remediation complete[/]")
-        console.print(f"[cyan]Output:[/] RemediationPlan object → Governance Agent\n")
-
-        stage['status'] = 'complete'
-        self._prompt_continue("Governance Agent")
-
-    def step_governance(self):
-        """Execute governance stage."""
-        stage = self.stages[self.current_stage]
-        stage['status'] = 'active'
-
-        console.print(self._render_pipeline())
-        console.print("\n[bold green]► GOVERNANCE AGENT[/]")
-        console.print("[bold]─────────────────────────────────────────[/]")
-
-        if not self.remediation_plan:
-            console.print("[bold red]✗ No plan to evaluate - skipping[/]\n")
-            stage['status'] = 'skipped'
-            return
-
-        console.print("[cyan]Action:[/] Validating remediation plan against company policies")
-        time.sleep(0.5)
-
-        console.print("[cyan]Tools being called:[/]")
-        console.print(f"  • get_company_policy_document: Checking policy compliance")
-        time.sleep(0.3)
-
-        stage['log'].append("Checking company policy compliance")
-        time.sleep(0.5)
-
-        console.print("\n[cyan]Evaluation:[/] Assessing plan against policies...")
-        time.sleep(0.3)
-
-        self.governance_decision = self.supervisor.governance_agent.evaluate(
-            self.incident,
-            self.remediation_plan
+def format_approval_prompt(incident: Incident, plan: RemediationPlan) -> Text:
+    """Formats the text for the human approval panel."""
+    incident_details = ""
+    if incident:
+        incident_details = (
+            f"[bold]Incident ID:[/][yellow] {incident.incident_id}[/]\n"
+            f"[bold]Type:[/][yellow] {incident.incident_type}[/]\n"
+            f"[bold]Severity:[/][yellow] {incident.severity}[/]\n"
+            f"[bold]Confidence:[/][yellow] {incident.diagnosis_confidence:.2f}[/]\n"
+            f"[bold]Root Cause:[/][yellow] {incident.root_cause_hypothesis}[/]\n"
+            f"[bold]Affected Cells:[/][yellow] {', '.join(incident.affected_cell_ids)}[/]\n"
         )
 
-        if self.governance_decision:
-            stage['log'].append(f"Decision: {self.governance_decision.decision}")
+    plan_details = ""
+    if plan and plan.actions:
+        action_descriptions = "\n".join([f"- {action.description}" for action in plan.actions])
+        plan_details = (
+            f"[bold]Plan Confidence:[/][green] {plan.plan_confidence:.2f}[/]\n"
+            f"[bold]Proposed Actions:[/]\n{action_descriptions}\n"
+            f"[bold]Rollback Plan:[/][green] {plan.rollback_plan}[/]\n"
+        )
 
-            decision_color = "green" if self.governance_decision.decision == "APPROVE" else "red"
-            console.print(f"  → Decision: [bold {decision_color}]{self.governance_decision.decision}[/]")
-            time.sleep(0.2)
+    return Text.from_markup(f"{incident_details}\n{plan_details}")
 
-            stage['log'].append(f"Reason: {self.governance_decision.reason}")
-            console.print(f"  → Reason: {self.governance_decision.reason[:60]}...")
-            time.sleep(0.2)
+def create_pipeline_visualization(active_agent: Optional[str], completed_agents: list) -> Panel:
+    """Creates a visual representation of the agent pipeline."""
+    agents = [
+        ("Monitoring", "🔍"),
+        ("Diagnostic", "🔬"),
+        ("Governance", "⚖️"),
+        ("Remediation", "🔧"),
+        ("Approval", "✅"),
+    ]
 
-            stage['log'].append(f"Policies checked: {', '.join(self.governance_decision.policies_checked)}")
-            console.print(f"  → Policies checked: {len(self.governance_decision.policies_checked)}")
-
-        time.sleep(0.5)
-        if self.governance_decision.decision == "APPROVE":
-            stage['log'].append("Plan approved - ready for human review")
-            console.print(f"\n[bold green]✓ Governance validation complete[/]")
-            console.print(f"[cyan]Output:[/] APPROVED - Awaiting human approval\n")
+    # Build pipeline visualization with arrows
+    pipeline_parts = []
+    for i, (agent_name, icon) in enumerate(agents):
+        # Style based on state
+        if agent_name == active_agent:
+            style = "bold green on black"
+            text = f"[{style}] {icon} {agent_name} (ACTIVE)[/]"
+        elif agent_name in completed_agents:
+            style = "green"
+            text = f"[{style}]✓ {agent_name}[/]"
         else:
-            stage['log'].append(f"Plan rejected: {self.governance_decision.reason}")
-            console.print(f"\n[bold red]✗ Plan rejected[/]")
-            console.print(f"[cyan]Output:[/] REJECTED - Manual review required\n")
+            style = "dim white"
+            text = f"[{style}]{icon} {agent_name}[/]"
 
-        stage['status'] = 'complete'
+        pipeline_parts.append(text)
 
-    def _prompt_continue(self, next_stage: str):
-        """Prompt user to continue, gracefully handle EOF."""
-        try:
-            console.input(f"[bold yellow]Press Enter to continue to {next_stage}...[/]")
-        except EOFError:
-            # Auto-continue when piped
-            console.print(f"[bold yellow](Auto-continuing to {next_stage}...)[/]")
+        # Add arrow between agents
+        if i < len(agents) - 1:
+            # Highlight arrow if data is flowing
+            if agent_name in completed_agents and agents[i+1][0] != active_agent:
+                pipeline_parts.append("[green]→[/]")
+            elif agent_name == active_agent:
+                pipeline_parts.append("[bold green]→[/]")
+            else:
+                pipeline_parts.append("[dim]→[/]")
 
-    def _render_pipeline(self) -> Panel:
-        """Render the agent pipeline with status."""
-        pipeline_text = ""
+    pipeline_text = Text(" ").join([Text.from_markup(part) for part in pipeline_parts])
+    return Panel(pipeline_text, title="[bold cyan]Agent Pipeline[/bold cyan]", style="cyan")
 
-        for i, stage in enumerate(self.stages):
-            # Status indicator
-            if stage['status'] == 'active':
-                indicator = "[bold green]●[/]"
-                color = "green"
-            elif stage['status'] == 'complete':
-                indicator = "[bold green]✓[/]"
-                color = "green"
-            elif stage['status'] == 'skipped':
-                indicator = "[bold yellow]⊘[/]"
-                color = "yellow"
-            else:  # pending
-                indicator = "[bold white]○[/]"
-                color = "white"
+def format_agent_logs(logger, supervisor_obj) -> Text:
+    """Format agent logs in natural language."""
+    logs = []
 
-            stage_name = f"[bold {color}]{stage['name']}[/]"
-            pipeline_text += f"{indicator} {stage_name}"
+    # Get agent logs from logger
+    for log in logger.get_incident_logs()[-5:]:  # Last 5 interactions
+        agent = log['agent']
+        tokens = log['tokens']
+        tools = log['tools_called']
 
-            if i < len(self.stages) - 1:
-                arrow = " [bold green]→[/] " if stage['status'] in ['complete', 'active'] else " [bold white]→[/] "
-                pipeline_text += arrow
+        if agent == 'DiagnosticAgent':
+            tools_str = f" using {', '.join(tools)}" if tools else ""
+            logs.append(f"📊 Diagnostic team analyzing incident{tools_str}... ({tokens} tokens)")
+        elif agent == 'RemediationAgent':
+            logs.append(f"🛠️ Remediation team creating action plan... ({tokens} tokens)")
+        elif agent == 'GovernanceAgent':
+            logs.append(f"⚖️ Governance team reviewing for policy compliance... ({tokens} tokens)")
 
-        return Panel(pipeline_text, title="[bold]Agent Pipeline[/]", expand=False)
-
-    def run(self):
-        """Run the interactive step-through demo."""
-        console.print("\n[bold cyan]╔═══════════════════════════════════════════════════════════╗[/]")
-        console.print("[bold cyan]║     WATCHTOWER MVP - INTERACTIVE STEP-THROUGH DEMO       ║[/]")
-        console.print("[bold cyan]╚═══════════════════════════════════════════════════════════╝[/]\n")
-
-        console.print("[yellow]Choose an anomaly type to inject:[/]")
-        console.print("  1. POWER_OUTAGE")
-        console.print("  2. FIBER_CUT")
-        console.print("  3. SIGNAL_INTERFERENCE\n")
-
-        try:
-            choice = console.input("[bold]Enter choice (1-3): [/]")
-        except EOFError:
-            choice = "1"
-            console.print("[bold yellow](Using default: POWER_OUTAGE)[/]")
-
-        anomaly_map = {
-            '1': 'POWER_OUTAGE',
-            '2': 'FIBER_CUT',
-            '3': 'SIGNAL_INTERFERENCE',
-        }
-
-        anomaly_type = anomaly_map.get(choice, 'POWER_OUTAGE')
-
-        # Detect anomaly
-        if not self.detect_anomaly(anomaly_type):
-            console.print("[bold red]No anomalies detected. Exiting.[/]\n")
-            return
-
-        # Step through each stage
-        while self.current_stage < len(self.stages):
-            stage = self.stages[self.current_stage]
-
-            if stage['name'] == 'MONITORING':
-                self.step_monitoring()
-            elif stage['name'] == 'DIAGNOSTIC':
-                self.step_diagnostic()
-            elif stage['name'] == 'REMEDIATION':
-                self.step_remediation()
-            elif stage['name'] == 'GOVERNANCE':
-                self.step_governance()
-
-            self.current_stage += 1
-
-        # Final summary
-        console.print(self._render_pipeline())
-        console.print("\n[bold green]═════════════════════════════════════════════════════════════[/]")
-        console.print("[bold green]INCIDENT PROCESSING COMPLETE[/]")
-        console.print("[bold green]═════════════════════════════════════════════════════════════[/]\n")
-
-        # Show final summary
-        console.print("[bold]Final Summary:[/]")
-        console.print(f"  • Incident Type: {self.incident.incident_type if self.incident else 'N/A'}")
-        console.print(f"  • Diagnosis Confidence: {self.incident.diagnosis_confidence:.0%}" if self.incident else "  • No incident diagnosed")
-        console.print(f"  • Remediation Plan: {'Created' if self.remediation_plan else 'Not created'}")
-        console.print(f"  • Governance Decision: {self.governance_decision.decision if self.governance_decision else 'N/A'}")
-
-        # Token usage
-        token_usage = self.supervisor.llm_client.get_token_usage_summary()
-        console.print(f"\n[cyan]Token Usage:[/] {token_usage['total_tokens']}/{self.supervisor.max_budget} tokens")
-        console.print(f"[cyan]API Calls:[/] {token_usage['calls_made']} LLM calls\n")
+    return Text("\n".join(logs) if logs else "Initializing agents...", style="cyan")
 
 if __name__ == "__main__":
-    demo = StepThroughDemo()
-    demo.run()
+    console.print("Starting simulation... Press 'p' to pause/resume. Press Ctrl+C to exit.", style="bold green")
+    time.sleep(1)
+    run_simulation()
+    console.print("Simulation stopped.", style="bold green")
