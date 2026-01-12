@@ -1,0 +1,11 @@
+POWER_OUTAGE:
+  description: "Dispatch technician to replace/repair Power Supply Unit (PSU) and engage grid operator."
+  action_template: "Dispatching Truck #{truck_id} to service Power Unit at {target_site}. ETA: 45 mins."
+
+FIBER_CUT:
+  description: "Dispatch fiber splicing team to the site of the cut and reroute critical traffic to backup links."
+  action_template: "Dispatching Fiber Splicing Team (Truck #{truck_id}) to physical location of fiber cut impacting {target_site}."
+
+SIGNAL_INTERFERENCE:
+  description: "Perform remote spectrum analysis and re-channelize affected radio frequencies."
+  action_template: "Executing remote spectrum analysis for {target_site} and re-calibrating radio frequencies."

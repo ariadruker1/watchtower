@@ -1,0 +1,7 @@
+[
+    {"id": "T001", "name": "Liberty Tower", "location": [40.7128, -74.0060]},
+    {"id": "T002", "name": "Empire Tower", "location": [40.7484, -73.9857]},
+    {"id": "T003", "name": "Brooklyn Bridge Tower", "location": [40.7061, -73.9969]},
+    {"id": "T004", "name": "Queensboro Tower", "location": [40.7566, -73.9589]},
+    {"id": "T005", "name": "Uptown Tower", "location": [40.779, -73.9695]}
+]
