@@ -397,8 +397,8 @@ def run_simulation():
 
                     approval_panel_text = Text.from_markup(
                         "[bold]Options:[/]\n"
-                        "  [bold green](y)[/] Approve plan\n"
-                        "  [bold red](n)[/] Reject - silence alert\n\n"
+                        "  [bold green](y)[/] Approve and enact plan\n"
+                        "  [bold red](n)[/] Reject and silence alarm\n\n"
                         "[bold]Your decision (y/n): [/]"
                     )
                     approval_full = Text("\n").join([approval_text, approval_panel_text])
@@ -413,9 +413,13 @@ def run_simulation():
                             response = key.lower()
 
                             if response == 'y':
-                                # APPROVAL
-                                agent_logs.append(Text(f"✅ Remediation plan APPROVED - Actions queued for execution", style="bold green"))
-                                full_log_history.append("✅ Remediation plan APPROVED - Actions queued for execution")
+                                # APPROVAL - format the plan nicely
+                                plan_actions = ""
+                                if plan and plan.actions:
+                                    plan_actions = " - " + ", ".join([a.description for a in plan.actions[:2]])
+                                approval_msg = f"✅ Remediation plan has been enacted{plan_actions}"
+                                agent_logs.append(Text(approval_msg, style="bold green"))
+                                full_log_history.append(approval_msg)
                                 engine.anomaly = None
                                 step_through_mode = False
                                 current_step_index = 0
@@ -434,9 +438,11 @@ def run_simulation():
                                 viewing_full_log = False
 
                             elif response == 'n':
-                                # REJECTION
-                                agent_logs.append(Text(f"✅ Alert SILENCED", style="bold yellow"))
-                                full_log_history.append("✅ Alert SILENCED")
+                                # REJECTION - show which alarm was silenced
+                                incident_type = incident.incident_type if incident else "Unknown incident"
+                                rejection_msg = f"✅ {incident_type} alarm was silenced"
+                                agent_logs.append(Text(rejection_msg, style="bold yellow"))
+                                full_log_history.append(rejection_msg)
                                 step_through_mode = False
                                 current_step_index = 0
                                 step_through_data = []
@@ -512,8 +518,8 @@ def create_pipeline_visualization(active_agent: Optional[str], completed_agents:
 
         # Add arrow between agents
         if i < len(agents) - 1:
-            # Highlight arrow if data is flowing
-            if agent_name in completed_agents and agents[i+1][0] != active_agent:
+            # Highlight arrow based on agent state
+            if agent_name in completed_agents:
                 pipeline_parts.append("[green]→[/]")
             elif agent_name == active_agent:
                 pipeline_parts.append("[bold green]→[/]")
@@ -527,6 +533,19 @@ def format_agent_logs(logger, supervisor_obj) -> Text:
     """Format agent logs in natural language or detailed step-through with scrolling support."""
     global llm_load_spinner
 
+    # If agents are active and not yet in step-through, show loading
+    if agents_active and not step_through_mode and loading_llm:
+        spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        spinner_char = spinners[llm_load_spinner % len(spinners)]
+        loading_msg = (
+            f"{spinner_char} Simulation paused - processing with AI agents...\n\n"
+            f"• Diagnostic agent analyzing incident\n"
+            f"• Generating remediation strategies\n"
+            f"• Reviewing policy compliance\n\n"
+            f"[bold cyan]Awaiting agent response...[/bold cyan]"
+        )
+        return Text.from_markup(loading_msg)
+
     # If viewing full log history
     if viewing_full_log:
         log_lines = list(full_log_history)
@@ -536,7 +555,7 @@ def format_agent_logs(logger, supervisor_obj) -> Text:
         # Apply scroll offset
         visible_lines = log_lines[log_scroll_offset:]
         display_text = "\n".join(visible_lines)
-        display_text += f"\n\n[dim]Scroll position: {log_scroll_offset}[/dim]"
+        display_text += f"\n\n[dim]Position: {log_scroll_offset} | Use ↑↓ to scroll[/dim]"
         return Text.from_markup(display_text)
 
     # If in step-through mode, show current step with navigation hint
@@ -544,7 +563,7 @@ def format_agent_logs(logger, supervisor_obj) -> Text:
         current_step = step_through_data[current_step_index]
         step_text = current_step["text"]
 
-        # Add loading indicator if waiting for LLM
+        # Add loading indicator if still processing
         if loading_llm:
             spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
             spinner_char = spinners[llm_load_spinner % len(spinners)]
@@ -568,16 +587,16 @@ def format_agent_logs(logger, supervisor_obj) -> Text:
         tools = log['tools_called']
 
         if agent == 'DiagnosticAgent':
-            tools_str = f" using {', '.join(tools)}" if tools else ""
-            log_msg = f"📊 Diagnostic team analyzing incident..."
+            tools_str = f"\n    Tools used: {', '.join(tools)}" if tools else ""
+            log_msg = f"• Root cause analysis performed{tools_str}\n    Tokens: {tokens}"
             logs.append(log_msg)
             full_log_history.append(log_msg)
         elif agent == 'RemediationAgent':
-            log_msg = f"🛠️ Remediation team creating action plan..."
+            log_msg = f"• Remediation action plan generated\n    Tokens: {tokens}"
             logs.append(log_msg)
             full_log_history.append(log_msg)
         elif agent == 'GovernanceAgent':
-            log_msg = f"⚖️ Governance team reviewing for policy compliance..."
+            log_msg = f"• Policy compliance review completed\n    Tokens: {tokens}"
             logs.append(log_msg)
             full_log_history.append(log_msg)
 
