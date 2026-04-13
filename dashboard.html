@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watchtower NOC Dashboard</title>
+<style>
+/* ── Reset & Base ────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0a0e17;
+  --panel:     #111827;
+  --border:    #1e293b;
+  --text:      #f1f5f9;
+  --text-dim:  #cbd5e1;
+  --green:     #34d399;
+  --amber:     #fbbf24;
+  --red:       #f87171;
+  --cyan:      #22d3ee;
+  --cyan-glow: rgba(34, 211, 238, 0.3);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 16px;
+  overflow: hidden;
+}
+
+/* Scanline overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+}
+
+/* ── Layout ──────────────────────────────────────────────── */
+.dashboard {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto auto auto;
+  height: 100vh;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 8px rgba(0,0,0,0.4);
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.header h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--cyan);
+  text-shadow: 0 0 10px var(--cyan-glow);
+}
+
+.status-badge {
+  font-size: 13px;
+  padding: 4px 12px;
+  border-radius: 10px;
+  background: rgba(34, 211, 238, 0.15);
+  color: var(--cyan);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+}
+
+.status-badge.disconnected {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 15px;
+  color: var(--text-dim);
+}
+
+.tick-display span { color: var(--text); font-weight: bold; }
+
+/* ── Middle Row: Map + Table ─────────────────────────────── */
+.middle-row {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 1px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Map Panel ───────────────────────────────────────────── */
+.map-panel {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-panel h2 {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.map-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map-container svg { width: 100%; height: 100%; }
+
+.tower-dot {
+  transition: fill 0.3s, r 0.3s;
+}
+
+.tower-dot.ok { fill: var(--green); }
+.tower-dot.alarm { fill: var(--amber); }
+.tower-dot.down { fill: var(--red); }
+
+.tower-dot.alarm, .tower-dot.down {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.tower-label {
+  font-size: 10px;
+  fill: var(--text);
+  font-family: 'Courier New', monospace;
+}
+
+/* ── Table Panel ─────────────────────────────────────────── */
+.table-panel {
+  padding: 12px 16px;
+  overflow-y: auto;
+}
+
+.table-panel h2 {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.tower-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.tower-table th {
+  text-align: left;
+  padding: 8px 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tower-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.5);
+  color: var(--text);
+}
+
+.tower-table tr { transition: background 0.2s; }
+.tower-table tbody tr:hover { background: rgba(34, 211, 238, 0.05); }
+
+.status-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.status-pill.ok      { background: rgba(52,211,153,0.15); color: var(--green); }
+.status-pill.alarm   { background: rgba(251,191,36,0.15);  color: var(--amber); }
+.status-pill.down    { background: rgba(248,113,113,0.15); color: var(--red);   }
+
+/* ── Pipeline Bar ────────────────────────────────────────── */
+.pipeline-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 12px 20px;
+}
+
+.pipe-node {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 20px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--text-dim);
+  background: var(--panel);
+  transition: all 0.3s;
+  min-width: 120px;
+  text-align: center;
+}
+
+.pipe-node.completed {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(52,211,153,0.08);
+}
+
+.pipe-node.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(34,211,238,0.1);
+  box-shadow: 0 0 12px var(--cyan-glow);
+}
+
+.pipe-arrow {
+  color: var(--text-dim);
+  margin: 0 6px;
+  font-size: 16px;
+}
+
+.pipe-arrow.completed { color: var(--green); }
+
+/* ── Agent Logs ──────────────────────────────────────────── */
+.logs-panel {
+  padding: 12px 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 250px;
+}
+
+.logs-panel h2 {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.logs-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.log-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.6);
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.log-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.log-agent-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--cyan);
+}
+
+.log-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.log-section {
+  margin-bottom: 5px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.log-section-label {
+  color: var(--cyan);
+  font-weight: 700;
+}
+
+.log-section-text {
+  color: var(--text);
+}
+
+/* ── Approval Panel ──────────────────────────────────────── */
+.approval-panel {
+  padding: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.4s ease, padding 0.4s ease;
+  border: none;
+  background: var(--panel);
+}
+
+.approval-panel.visible {
+  max-height: 350px;
+  padding: 16px 24px;
+  border: 1px solid var(--amber);
+  box-shadow: 0 0 20px rgba(251, 191, 36, 0.15);
+}
+
+.approval-header {
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: var(--amber);
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.approval-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+
+.approval-field label {
+  color: var(--text-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.approval-field .value {
+  color: var(--text);
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+.approval-actions-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.approval-actions-list {
+  margin-bottom: 14px;
+  font-size: 14px;
+  padding-left: 22px;
+  color: var(--text);
+}
+
+.approval-actions-list li { margin-bottom: 5px; }
+
+.approval-buttons {
+  display: flex;
+  gap: 14px;
+  justify-content: flex-end;
+}
+
+.btn-approve, .btn-reject {
+  padding: 10px 32px;
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-approve {
+  background: rgba(52, 211, 153, 0.2);
+  color: var(--green);
+  border: 1px solid var(--green);
+}
+
+.btn-approve:hover {
+  background: rgba(52, 211, 153, 0.35);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.3);
+}
+
+.btn-reject {
+  background: rgba(248, 113, 113, 0.2);
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+
+.btn-reject:hover {
+  background: rgba(248, 113, 113, 0.35);
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.3);
+}
+
+/* ── Controls Footer ─────────────────────────────────────── */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 12px 24px;
+  background: linear-gradient(0deg, #0f172a 0%, #111827 100%);
+  border-top: 1px solid var(--border);
+}
+
+.ctrl-btn {
+  padding: 8px 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 0.5px;
+}
+
+.ctrl-btn:hover:not(:disabled) {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.ctrl-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.ctrl-btn.primary {
+  background: rgba(34, 211, 238, 0.12);
+  color: var(--cyan);
+  border-color: rgba(34, 211, 238, 0.4);
+}
+
+.ctrl-btn.primary:hover:not(:disabled) {
+  background: rgba(34, 211, 238, 0.25);
+  box-shadow: 0 0 10px var(--cyan-glow);
+}
+
+.toggle-btn {
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.toggle-btn.active {
+  background: rgba(34, 211, 238, 0.15);
+  color: var(--cyan);
+  border-color: rgba(34, 211, 238, 0.4);
+}
+
+.toggle-btn:hover { border-color: var(--cyan); }
+
+.ctrl-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+}
+
+.tick-display {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-left: 8px;
+}
+
+.tick-display span { color: var(--text); font-weight: bold; }
+
+/* ── Loading Spinner ─────────────────────────────────────── */
+.spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-left: 8px;
+}
+
+.spinner.visible { display: inline-block; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Scrollbar ───────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #334155; }
+</style>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- ── Header ────────────────────────────────────────── -->
+  <div class="header panel">
+    <div class="header-left">
+      <h1>WATCHTOWER NOC</h1>
+      <span id="connBadge" class="status-badge disconnected">Disconnected</span>
+    </div>
+    <div class="header-right">
+      <div class="tick-display">Tick: <span id="tickNum">0</span></div>
+    </div>
+  </div>
+
+  <!-- ── Middle: Map + Table ───────────────────────────── -->
+  <div class="middle-row">
+    <div class="map-panel panel">
+      <h2>NYC Tower Map</h2>
+      <div class="map-container">
+        <svg viewBox="0 0 300 400" xmlns="http://www.w3.org/2000/svg">
+          <!-- Simplified Manhattan / Brooklyn outline -->
+          <polygon points="80,40 140,20 180,30 200,60 210,120 220,180 210,240 200,280 180,300 160,310 130,330 110,350 90,360 70,340 60,300 50,260 55,200 60,140 65,100 70,60"
+                   fill="none" stroke="#1e293b" stroke-width="1.5" opacity="0.6"/>
+          <!-- Brooklyn shape -->
+          <polygon points="130,330 160,310 200,320 240,340 250,370 220,380 170,380 130,370"
+                   fill="none" stroke="#1e293b" stroke-width="1.5" opacity="0.4"/>
+
+          <!-- Tower dots (positioned via JS) -->
+          <g id="towerDots"></g>
+        </svg>
+      </div>
+    </div>
+
+    <div class="table-panel panel">
+      <h2>Tower Status</h2>
+      <table class="tower-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Power</th>
+            <th>Signal</th>
+            <th>Throughput</th>
+          </tr>
+        </thead>
+        <tbody id="towerTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Pipeline Bar ──────────────────────────────────── -->
+  <div class="pipeline-bar panel">
+    <div class="pipe-node" id="pipe-monitoring">Monitor</div>
+    <span class="pipe-arrow" id="arrow-1">&rarr;</span>
+    <div class="pipe-node" id="pipe-diagnostic">Diagnostic</div>
+    <span class="pipe-arrow" id="arrow-2">&rarr;</span>
+    <div class="pipe-node" id="pipe-remediation">Remediation</div>
+    <span class="pipe-arrow" id="arrow-3">&rarr;</span>
+    <div class="pipe-node" id="pipe-governance">Governance</div>
+    <span class="pipe-arrow" id="arrow-4">&rarr;</span>
+    <div class="pipe-node" id="pipe-approval">Approval</div>
+    <div class="spinner" id="pipelineSpinner"></div>
+  </div>
+
+  <!-- ── Agent Decision Logs ───────────────────────────── -->
+  <div class="logs-panel panel">
+    <h2>Agent Decision Logs</h2>
+    <div class="logs-scroll" id="logsScroll"></div>
+  </div>
+
+  <!-- ── Approval Panel ────────────────────────────────── -->
+  <div class="approval-panel" id="approvalPanel">
+    <div class="approval-header">Human Approval Required</div>
+    <div class="approval-details">
+      <div class="approval-field">
+        <label>Type</label>
+        <div class="value" id="apprType">--</div>
+      </div>
+      <div class="approval-field">
+        <label>Severity</label>
+        <div class="value" id="apprSeverity">--</div>
+      </div>
+      <div class="approval-field">
+        <label>Confidence</label>
+        <div class="value" id="apprConfidence">--</div>
+      </div>
+      <div class="approval-field">
+        <label>Root Cause</label>
+        <div class="value" id="apprRootCause">--</div>
+      </div>
+    </div>
+    <div>
+      <div class="approval-actions-label">Proposed Actions</div>
+      <ol class="approval-actions-list" id="apprActions"></ol>
+    </div>
+    <div class="approval-buttons">
+      <button class="btn-approve" onclick="doApprove()">APPROVE</button>
+      <button class="btn-reject" onclick="doReject()">REJECT</button>
+    </div>
+  </div>
+
+  <!-- ── Controls Footer ──────────────────────────────── -->
+  <div class="controls panel">
+    <button id="btnStart" class="ctrl-btn primary" onclick="startSim()">Start Simulation</button>
+    <button id="btnPause" class="ctrl-btn" onclick="togglePause()" disabled>Pause</button>
+    <div class="ctrl-separator"></div>
+    <button id="stepToggle" class="toggle-btn" onclick="toggleStepThrough()">Step-Through: OFF</button>
+    <button id="btnStep" class="ctrl-btn" onclick="nextStep()" disabled>Next Step</button>
+  </div>
+
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────
+let topology = [];
+let currentState = null;
+let evtSource = null;
+let userScrolledLogs = false;
+
+// ── Coordinate mapping for SVG ────────────────────────────
+function latLngToSvg(lat, lng) {
+  const x = (lng - (-74.006)) / 0.0471 * 240 + 30;
+  const y = 350 - (lat - 40.7061) / 0.0729 * 300;
+  return { x, y };
+}
+
+// ── Init ──────────────────────────────────────────────────
+async function init() {
+  try {
+    const res = await fetch('/api/topology');
+    topology = await res.json();
+  } catch (e) {
+    topology = [];
+  }
+  renderMapDots();
+  renderEmptyTable();
+  connectSSE();
+}
+
+// ── SSE Connection ────────────────────────────────────────
+function connectSSE() {
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource('/api/events');
+
+  evtSource.addEventListener('state', (e) => {
+    try {
+      currentState = JSON.parse(e.data);
+      renderState(currentState);
+    } catch (err) { /* ignore parse errors */ }
+  });
+
+  evtSource.onopen = () => {
+    document.getElementById('connBadge').textContent = 'Connected';
+    document.getElementById('connBadge').className = 'status-badge';
+  };
+
+  evtSource.onerror = () => {
+    document.getElementById('connBadge').textContent = 'Disconnected';
+    document.getElementById('connBadge').className = 'status-badge disconnected';
+    setTimeout(() => {
+      if (evtSource.readyState === EventSource.CLOSED) connectSSE();
+    }, 3000);
+  };
+}
+
+// ── Render Full State ─────────────────────────────────────
+function renderState(s) {
+  // Tick
+  document.getElementById('tickNum').textContent = s.tick;
+
+  // Step-through toggle
+  const toggleBtn = document.getElementById('stepToggle');
+  toggleBtn.textContent = 'Step-Through: ' + (s.step_through ? 'ON' : 'OFF');
+  toggleBtn.className = 'toggle-btn' + (s.step_through ? ' active' : '');
+
+  // Controls
+  document.getElementById('btnStart').disabled = s.running;
+  document.getElementById('btnPause').disabled = !s.running;
+  document.getElementById('btnPause').textContent = s.paused ? 'Resume' : 'Pause';
+
+  // Next Step: only enabled when step-through is ON AND pipeline is waiting
+  document.getElementById('btnStep').disabled =
+    !s.running || !s.step_through || s.pipeline_phase !== 'waiting';
+
+  // Table
+  renderTable(s.telemetry);
+
+  // Map dots
+  updateMapDots(s.telemetry);
+
+  // Pipeline
+  renderPipeline(s);
+
+  // Logs
+  renderLogs(s.agent_logs);
+
+  // Approval
+  renderApproval(s);
+}
+
+// ── Map ───────────────────────────────────────────────────
+function renderMapDots() {
+  const g = document.getElementById('towerDots');
+  g.innerHTML = '';
+  topology.forEach(t => {
+    const { x, y } = latLngToSvg(t.location[0], t.location[1]);
+
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', x);
+    circle.setAttribute('cy', y);
+    circle.setAttribute('r', '8');
+    circle.setAttribute('class', 'tower-dot ok');
+    circle.setAttribute('id', 'dot-' + t.id);
+    g.appendChild(circle);
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', x + 12);
+    label.setAttribute('y', y + 4);
+    label.setAttribute('class', 'tower-label');
+    label.textContent = t.name.split(' ')[0];
+    g.appendChild(label);
+  });
+}
+
+function updateMapDots(telemetry) {
+  if (!telemetry) return;
+  Object.values(telemetry).forEach(t => {
+    const dot = document.getElementById('dot-' + t.tower_id);
+    if (!dot) return;
+    dot.className.baseVal = 'tower-dot ' + statusClass(t.status);
+  });
+}
+
+function statusClass(status) {
+  if (status === 'DOWN') return 'down';
+  if (status === 'ALARM') return 'alarm';
+  return 'ok';
+}
+
+// ── Table ─────────────────────────────────────────────────
+function renderEmptyTable() {
+  const tbody = document.getElementById('towerTableBody');
+  tbody.innerHTML = '';
+  topology.forEach(t => {
+    const tr = document.createElement('tr');
+    tr.id = 'row-' + t.id;
+    tr.innerHTML = `
+      <td>${t.id}</td>
+      <td>${t.name}</td>
+      <td><span class="status-pill ok">OK</span></td>
+      <td>--</td><td>--</td><td>--</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderTable(telemetry) {
+  if (!telemetry) return;
+  Object.values(telemetry).forEach(t => {
+    const tr = document.getElementById('row-' + t.tower_id);
+    if (!tr) return;
+    const sc = statusClass(t.status);
+    tr.innerHTML = `
+      <td>${t.tower_id}</td>
+      <td>${t.tower_name}</td>
+      <td><span class="status-pill ${sc}">${t.status}</span></td>
+      <td>${t.power_level.toFixed(1)}%</td>
+      <td>${t.signal_strength.toFixed(1)} dBm</td>
+      <td>${t.data_throughput.toFixed(0)} Mbps</td>`;
+  });
+}
+
+// ── Pipeline ──────────────────────────────────────────────
+const pipeStages = ['monitoring', 'diagnostic', 'remediation', 'governance', 'approval'];
+
+function renderPipeline(s) {
+  const history = s.agent_history || [];
+  const phase = s.pipeline_phase;
+  const isProcessing = pipeStages.includes(phase);
+
+  pipeStages.forEach((stage, i) => {
+    const node = document.getElementById('pipe-' + stage);
+    const arrowId = 'arrow-' + (i + 1);
+    const arrow = document.getElementById(arrowId);
+
+    node.className = 'pipe-node';
+    if (arrow) arrow.className = 'pipe-arrow';
+
+    if (history.includes(stage)) {
+      node.classList.add('completed');
+      if (arrow) arrow.classList.add('completed');
+    }
+    if (phase === stage) {
+      node.classList.add('active');
+    }
+    // When waiting, highlight the last completed stage as still "active" so user
+    // sees where the pipeline is paused
+    if (phase === 'waiting' && history.length > 0 && stage === history[history.length - 1]) {
+      node.classList.add('active');
+    }
+  });
+
+  // Spinner
+  const spinner = document.getElementById('pipelineSpinner');
+  spinner.className = 'spinner' + (isProcessing && phase !== 'idle' ? ' visible' : '');
+}
+
+// ── Logs ──────────────────────────────────────────────────
+let lastLogCount = 0;
+
+function renderLogs(logs) {
+  if (!logs) return;
+  const container = document.getElementById('logsScroll');
+
+  // Only re-render if log count changed
+  if (logs.length === lastLogCount) return;
+  lastLogCount = logs.length;
+
+  // Check if user has scrolled up
+  const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 30;
+
+  container.innerHTML = '';
+  logs.forEach(log => {
+    const card = document.createElement('div');
+    card.className = 'log-card';
+
+    // Parse natural_language_log into sections
+    const sections = parseLogSections(log.natural_language_log || '');
+    const toolsStr = (log.tools && log.tools.length) ? log.tools.join(', ') : 'none';
+
+    card.innerHTML = `
+      <div class="log-card-header">
+        <span class="log-agent-name">${escapeHtml(log.agent)}</span>
+        <span class="log-meta">Tools: ${escapeHtml(toolsStr)}</span>
+      </div>
+      ${sections.map(sec => `
+        <div class="log-section">
+          <span class="log-section-label">${sec.label}: </span>
+          <span class="log-section-text">${escapeHtml(sec.text)}</span>
+        </div>
+      `).join('')}
+    `;
+    container.appendChild(card);
+  });
+
+  // Auto-scroll if user hasn't scrolled up
+  if (isAtBottom || !userScrolledLogs) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function parseLogSections(text) {
+  const sections = [];
+  const lines = text.split('\n');
+  let currentLabel = '';
+  let currentText = '';
+
+  lines.forEach(line => {
+    const match = line.match(/^(Received|Investigated|Suggestions):\s*(.*)/);
+    if (match) {
+      if (currentLabel) {
+        sections.push({ label: currentLabel, text: currentText.trim() });
+      }
+      currentLabel = match[1];
+      currentText = match[2];
+    } else if (currentLabel) {
+      currentText += '\n' + line;
+    }
+  });
+  if (currentLabel) {
+    sections.push({ label: currentLabel, text: currentText.trim() });
+  }
+  return sections;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Detect user scroll in logs
+document.addEventListener('DOMContentLoaded', () => {
+  const logsEl = document.getElementById('logsScroll');
+  logsEl.addEventListener('scroll', () => {
+    const isAtBottom = logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight < 30;
+    userScrolledLogs = !isAtBottom;
+  });
+});
+
+// ── Approval ──────────────────────────────────────────────
+function renderApproval(s) {
+  const panel = document.getElementById('approvalPanel');
+
+  if (s.approval_required && s.incident && s.plan) {
+    panel.classList.add('visible');
+
+    document.getElementById('apprType').textContent = s.incident.incident_type || '--';
+    document.getElementById('apprSeverity').textContent = s.incident.severity || '--';
+    document.getElementById('apprConfidence').textContent =
+      s.incident.diagnosis_confidence != null
+        ? (s.incident.diagnosis_confidence * 100).toFixed(0) + '%'
+        : '--';
+    document.getElementById('apprRootCause').textContent =
+      s.incident.root_cause_hypothesis || '--';
+
+    const actionsList = document.getElementById('apprActions');
+    actionsList.innerHTML = '';
+    (s.plan.actions || []).forEach(a => {
+      const li = document.createElement('li');
+      li.textContent = a.description || a.action_type || '--';
+      actionsList.appendChild(li);
+    });
+  } else {
+    panel.classList.remove('visible');
+  }
+}
+
+// ── Control Actions ───────────────────────────────────────
+async function startSim() {
+  document.getElementById('btnStart').disabled = true;
+  await fetch('/api/start', { method: 'POST' });
+}
+
+async function togglePause() {
+  await fetch('/api/pause', { method: 'POST' });
+}
+
+async function nextStep() {
+  await fetch('/api/step', { method: 'POST' });
+}
+
+async function toggleStepThrough() {
+  await fetch('/api/toggle-step-through', { method: 'POST' });
+}
+
+async function doApprove() {
+  await fetch('/api/approve', { method: 'POST' });
+}
+
+async function doReject() {
+  await fetch('/api/reject', { method: 'POST' });
+}
+
+// ── Boot ──────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

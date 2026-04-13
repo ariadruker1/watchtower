@@ -163,7 +163,7 @@ ONLY JSON. NO OTHER TEXT."""
                     after_state_expected={},
                     execution_steps=[]
                 )],
-                rollback_plan="\n".join(plan_data.get('future_preventative_measures', ['Implement monitoring improvements'])),
+                rollback_plan=plan_data.get('risk_assessment', 'No rollback plan specified'),
                 verification_steps=plan_data.get('verification_steps', []),
                 plan_confidence=min(max(plan_data.get('plan_confidence', incident.diagnosis_confidence), 0), 1.0)
             )

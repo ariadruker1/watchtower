@@ -60,11 +60,14 @@ Respond with ONLY this JSON format (no prose):
 
 ONLY JSON. NO OTHER TEXT."""
 
+        # Governance only needs the policy document tool — not weather/maintenance/etc.
+        governance_tools = [t for t in TOOLS_SCHEMA if t['name'] == 'get_company_policy_document']
+
         # Call Claude
         response = self.llm_client.call(
             system_prompt=system_prompt,
             user_message=user_message,
-            tools=TOOLS_SCHEMA
+            tools=governance_tools
         )
 
         if response.get('error'):
@@ -118,7 +121,7 @@ ONLY JSON. NO OTHER TEXT."""
                 current_response = self.llm_client.call_with_tool_results(
                     system_prompt=system_prompt,
                     messages=messages,
-                    tools=TOOLS_SCHEMA
+                    tools=governance_tools
                 )
                 total_tokens += current_response.get('total_tokens', 0)
 
