@@ -2,3 +2,5 @@ rich
 PyYAML
 openai
 python-dotenv
+fastapi
+uvicorn

@@ -5,7 +5,7 @@ AI-powered incident management demo for telecom network outages using Claude AI.
 ## Quick Start
 
 ```bash
-cd watchtower_mvp
+cd watchtower
 pip install -r requirements.txt
 
 # For latest OpenAI-based version:
